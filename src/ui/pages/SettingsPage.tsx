@@ -8,7 +8,7 @@ import { requestBrowserNotificationPermission } from "../../services/notificatio
 export function SettingsPage() {
   const nav = useNavigate();
   const [row, setRow] = useState<SettingsRow | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [err] = useState<string | null>(null);
 
   useEffect(() => { void (async () => {
     const g = await LocalDb.getCurrentGroup();
