@@ -1,59 +1,40 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { LocalDb } from "../../data/local/localDb";
-import type { SettingsRow } from "../../utils/types";
-import { isPwaInstalled } from "../../services/notifications/tier1_pwa";
-import { requestBrowserNotificationPermission } from "../../services/notifications/tier1_push_min";
+﻿import { useNavigate } from 'react-router-dom';
 
-export function SettingsPage() {
-  const nav = useNavigate();
-  const [row, setRow] = useState<SettingsRow | null>(null);
-  const [err] = useState<string | null>(null);
-
-  useEffect(() => { void (async () => {
-    const g = await LocalDb.getCurrentGroup();
-    if (!g) return nav("/onboarding");
-    const s = await LocalDb.ensureSettings(g.group_id);
-    setRow(s);
-  })(); }, [nav]);
-
-  async function toggleShowTemp() {
-    if (!row) return;
-    const next = { ...row, show_temp_on_home: !row.show_temp_on_home, updated_at: new Date().toISOString() };
-    await LocalDb.upsertSettings(next);
-    setRow(next);
-  }
-  function explainPwa() {
-    alert("【PWA（アプリ化）】\niPhone/Androidで『ホーム画面に追加』すると、アプリのように使えます。\n通知（Push）は端末によって不安定なため、このアプリはPushを主役にしません。まずはアプリ内通知（Tier0）で成立します。");
-  }
-  async function enableNotifications() {
-    const p = await requestBrowserNotificationPermission();
-    alert(`通知権限: ${p}`);
-  }
-
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <div style={{ fontSize: 13, color: '#666', margin: '14px 0 8px' }}>{children}</div>;
+}
+function MenuButton({ label, desc, onClick }: { label: string; desc?: string; onClick: () => void; }) {
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <h2 style={{ margin: 0 }}>設定</h2>
-      {err && <div style={{ color: "crimson" }}>{err}</div>}
-      <section style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12, background: "white" }}>
-        <div style={{ fontWeight: 800, marginBottom: 10 }}>プライバシー</div>
-        <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <input type="checkbox" checked={!!row?.show_temp_on_home} onChange={toggleShowTemp} />
-          ホームで体温を表示する（OFFで伏字）
-        </label>
-        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>身内配布でも、画面の覗き見対策として伏字を推奨します。</div>
-      </section>
-      <section style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12, background: "white" }}>
-        <div style={{ fontWeight: 800, marginBottom: 10 }}>PWA（アプリ化）</div>
-        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>現在の状態: {isPwaInstalled() ? "インストール済み" : "未インストール（推奨）"}</div>
-        <button onClick={explainPwa}>ホーム画面に追加する方法</button>
-      </section>
-      <section style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12, background: "white" }}>
-        <div style={{ fontWeight: 800, marginBottom: 10 }}>通知（任意）</div>
-        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>端末によって不安定なため、通知は主役にしません。まずはアプリ内通知（Tier0）で成立します。</div>
-        <button onClick={enableNotifications}>通知を許可する</button>
-      </section>
-      <button onClick={() => nav("/")}>戻る</button>
+    <button onClick={onClick} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: 12, border: '1px solid rgba(0,0,0,0.08)', background: '#fff', cursor: 'pointer' }}>
+      <div style={{ fontSize: 16, fontWeight: 700 }}>{label}</div>
+      {desc ? <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>{desc}</div> : null}
+    </button>
+  );
+}
+
+export default function SettingsPage() {
+  const nav = useNavigate();
+  return (
+    <div style={{ padding: 16, maxWidth: 600, margin: '0 auto' }}>
+      <h1 style={{ margin: '6px 0 10px' }}>設定</h1>
+      <SectionTitle>グループ設定</SectionTitle>
+      <div style={{ display: 'grid', gap: 10 }}>
+        <MenuButton label='グループ設定' desc='グループ名 / 招待コード / メンバー管理' onClick={() => nav('/settings/group')} />
+      </div>
+      <SectionTitle>投薬設定</SectionTitle>
+      <div style={{ display: 'grid', gap: 10 }}>
+        <MenuButton label='投薬設定' desc='登録薬の編集・削除 / 並び替え' onClick={() => nav('/settings/medication')} />
+      </div>
+      <SectionTitle>個別設定（この端末のみ）</SectionTitle>
+      <div style={{ display: 'grid', gap: 10 }}>
+        <MenuButton label='個別設定' desc='高熱ライン / 案内 / 通知頻度 / 連絡先' onClick={() => nav('/settings/personal')} />
+      </div>
+      <div style={{ marginTop: 8, fontSize: 12, color: '#666', lineHeight: 1.4, background: '#f7f7f7', borderRadius: 12, padding: 10 }}>
+        ※「個別設定」は、この端末にのみ反映されます。家族/他端末には影響しません。
+      </div>
+      <div style={{ marginTop: 20 }}>
+        <button onClick={() => nav('/')}>ホームへ戻る</button>
+      </div>
     </div>
   );
 }

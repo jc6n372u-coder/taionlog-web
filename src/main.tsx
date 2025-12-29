@@ -1,15 +1,10 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { RouterProvider } from "react-router-dom";
-import { router } from "./app/router";
-import { bootstrap } from "./services/sync/bootstrap";
-import { registerPwa } from "./app/pwa";
+﻿import React from 'react';
+import ReactDOM from 'react-dom/client';
+import AppRouter from './app/AppRouter';
+// import { registerPwa } from './app/pwa'; // PWAは後ほど有効化
 
-bootstrap();
-registerPwa();
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
+ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <AppRouter />
   </React.StrictMode>
 );
