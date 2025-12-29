@@ -1,54 +1,39 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ApiClient } from "../../data/remote/apiClient";
-import { LocalDb } from "../../data/local/localDb";
+import { useState } from 'react';
 
-export function OnboardingPage() {
-  const nav = useNavigate();
-  const [groupName, setGroupName] = useState("家族");
-  const [joinCode, setJoinCode] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+export default function OnboardingPage() {
+  const [checked, setChecked] = useState(false);
 
-  async function createGroup() {
-    setErr(null); setLoading(true);
-    try {
-      const res = await ApiClient.createGroup(groupName.trim());
-      const data = res.data as any;
-      // 修正: カッコを追加
-      await LocalDb.setCurrentGroup(data.group_id, (data.name ?? groupName.trim()) || "家族");
-      alert(`参加コード: ${data.join_code}\n有効期限: ${data.expires_at ?? ""}`);
-      nav("/");
-    } catch (e: any) { setErr(e.message ?? String(e)); } finally { setLoading(false); }
-  }
-
-  async function joinGroup() {
-    setErr(null); setLoading(true);
-    try {
-      const code = joinCode.toUpperCase().trim();
-      if (!code) return setErr("参加コードを入力してください");
-      const res = await ApiClient.joinGroup(code);
-      const data = res.data as any;
-      // 修正: カッコを追加
-      await LocalDb.setCurrentGroup(data.group_id, data.name ?? "家族");
-      nav("/");
-    } catch (e: any) { setErr(e.message ?? String(e)); } finally { setLoading(false); }
+  function accept() {
+    localStorage.setItem('policyAccepted', 'true');
+    window.location.reload(); // 同意を反映してAppRouterを再評価
   }
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <h2 style={{ margin: 0 }}>はじめに</h2>
-      {err && <div style={{ color: "crimson" }}>{err}</div>}
-      <section style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-        <div style={{ fontWeight: 800, marginBottom: 8 }}>新しく始める</div>
-        <input value={groupName} onChange={(e)=>setGroupName(e.target.value)} placeholder="グループ名" style={{ width: "100%", padding: 10 }} />
-        <button onClick={createGroup} disabled={loading} style={{ marginTop: 8, padding: 10 }}>作成</button>
-      </section>
-      <section style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-        <div style={{ fontWeight: 800, marginBottom: 8 }}>参加する</div>
-        <input value={joinCode} onChange={(e)=>setJoinCode(e.target.value)} placeholder="参加コード" style={{ width: "100%", padding: 10, textTransform: "uppercase" }} />
-        <button onClick={joinGroup} disabled={loading} style={{ marginTop: 8, padding: 10 }}>参加</button>
-      </section>
+    <div style={{ padding: 24, maxWidth: 600, margin: '0 auto', fontFamily: 'system-ui' }}>
+      <h2 style={{ color: '#333' }}>ご利用前の確認</h2>
+      <div style={{ background: '#f7f7f7', padding: 16, borderRadius: 12, marginBottom: 20 }}>
+        <ul style={{ lineHeight: 1.6 }}>
+          <li>グループ設定は管理者のスプレッドシートで管理されます [cite: 2116]</li>
+          <li>住所・漢字フルネーム等の個人情報は記載しないでください [cite: 2118]</li>
+          <li>本アプリは医療行為を代替するものではありません [cite: 2119]</li>
+        </ul>
+      </div>
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} />
+        <span>上記内容を理解しました [cite: 2123]</span>
+      </label>
+
+      <button 
+        disabled={!checked} 
+        onClick={accept}
+        style={{
+          marginTop: 20, width: '100%', padding: 12, borderRadius: 12,
+          background: checked ? '#5BB6E5' : '#ccc', color: '#fff', border: 'none', fontWeight: 700
+        }}
+      >
+        同意して利用開始 [cite: 2127]
+      </button>
     </div>
   );
 }
