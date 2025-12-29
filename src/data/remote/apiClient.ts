@@ -1,4 +1,4 @@
-import type { PushData, SyncResponse } from "../../utils/types";
+﻿import type { PushData, SyncResponse } from "../../utils/types";
 import { getDeviceId } from "../../security/deviceId";
 
 const baseUrl = import.meta.env.VITE_GAS_BASE_URL as string;
@@ -23,16 +23,14 @@ async function post(body: Record<string, any>) {
     api_secret: apiSecret,
     device_id,
   };
-  
+
   const res = await fetch(baseUrl, {
     method: "POST",
-    // 修正: text/plain にすることで、GASへの通信時にブラウザのPreflight(予備検査)を回避します
     headers: { "Content-Type": "text/plain" },
     body: JSON.stringify(payload),
     redirect: "follow",
   });
-  
-  // GASのリダイレクト対策
+
   if (!res.ok) throw new Error("サーバーエラーが発生しました");
   const json = await res.json();
   if (!json || json.ok !== true) throw new Error(translateError(json?.error?.toString()));

@@ -1,20 +1,19 @@
-import React from "react";
+﻿import React from "react";
 import ReactDOM from "react-dom/client";
-import AppRouter from "./app/AppRouter"; // 読み込み先をAppRouterに変更
+import AppRouter from "./app/AppRouter";
 import { bootstrap } from "./services/sync/bootstrap";
 import { registerPwa } from "./app/pwa";
-import "./index.css";
+import { ErrorBoundary } from "./ui/components/ErrorBoundary"; // 追加
 
-// 1. 起動時の初期化（グループロード、背景同期、通知の準備）を実行 
+// 起動処理
 bootstrap();
-
-// 2. PWA（ホーム画面追加機能）の有効化 [cite: 826]
 registerPwa();
 
-// 3. アプリのレンダリング
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {/* ルーティングの司令塔であるAppRouterを呼び出す [cite: 259, 1840] */}
-    <AppRouter />
+    {/* 全体をErrorBoundaryで囲むことで、エラー時に詳細を表示する */}
+    <ErrorBoundary>
+      <AppRouter />
+    </ErrorBoundary>
   </React.StrictMode>
 );

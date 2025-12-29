@@ -1,4 +1,5 @@
-export type ISO = string;
+﻿export type ISO = string;
+
 export type User = {
   uuid: string;
   group_id: string;
@@ -12,7 +13,10 @@ export type User = {
   note?: string;
   is_deleted: 0 | 1;
   updated_at: ISO;
+  // Phase B追記: ローカル並び替え用
+  sort_order?: number;
 };
+
 export type RecordRow = {
   uuid: string;
   group_id: string;
@@ -23,6 +27,7 @@ export type RecordRow = {
   is_deleted: 0 | 1;
   updated_at: ISO;
 };
+
 export type Medication = {
   uuid: string;
   group_id: string;
@@ -31,7 +36,10 @@ export type Medication = {
   display_order: number;
   is_deleted: 0 | 1;
   updated_at: ISO;
+  // Phase B追記
+  sort_order?: number;
 };
+
 export type EventRow = {
   uuid: string;
   group_id: string;
@@ -40,8 +48,10 @@ export type EventRow = {
   occurred_at: ISO;
   payload?: string; // medication_uuid
   is_deleted: 0 | 1;
+  synced_at?: ISO; // 自動整理用
   updated_at: ISO;
 };
+
 export type Reminder = {
   uuid: string;
   group_id: string;
@@ -52,19 +62,22 @@ export type Reminder = {
   is_deleted: 0 | 1;
   updated_at: ISO;
 };
+
 export type SettingsRow = {
   group_id: string;
   show_temp_on_home: boolean;
   updated_at: ISO;
 };
+
 export type PushData = {
   users: User[];
   records: RecordRow[];
   medications: Medication[];
   events: EventRow[];
   reminders: Reminder[];
-  settings?: SettingsRow | null; // SSOT 24.1の拡張を反映
+  settings?: SettingsRow; 
 };
+
 export type SyncResponse = {
   ok: true;
   data: {
