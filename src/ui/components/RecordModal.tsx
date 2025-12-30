@@ -1,124 +1,183 @@
-﻿import { useEffect, useMemo, useState } from "react";
-import type { User, RecordRow, EventRow, Medication } from "../../utils/types";
+﻿import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import type { User, RecordRow } from "../../utils/types";
 import { LocalDb } from "../../data/local/localDb";
-import { ensureNextReminder } from "../../features/members/reminderService";
 
-type Props = { user: User; onClose: () => void; onSaved: () => void };
-
-const memoTemplates = ["咳","鼻水","頭痛","元気","だるそう","食欲あり","食欲なし","嘔吐","下痢"];
+type Props = {
+  user: User;
+  onClose: () => void;
+  onSaved: () => void;
+};
 
 export function RecordModal({ user, onClose, onSaved }: Props) {
-  const [temp, setTemp] = useState(36.5);
-  const [measuredAt, setMeasuredAt] = useState<string>(new Date().toISOString().slice(0,16)); 
-  const [memo, setMemo] = useState("");
-  const [meds, setMeds] = useState<Medication[]>([]);
-  const [selectedMed, setSelectedMed] = useState<Record<string, boolean>>({});
+  const [temp, setTemp] = useState<string>("");
+  const [saving, setSaving] = useState(false);
 
-  const groupPromise = useMemo(() => LocalDb.getCurrentGroup(), []);
-
-  useEffect(() => { 
-    void (async () => {
-      const g = await groupPromise;
-      if (!g) return;
-      setMeds(await LocalDb.listMedications(g.group_id));
-    })(); 
-  }, [groupPromise]);
-
-  function toggleTemplate(t: string) {
-    setMemo(prev => prev.includes(t) ? prev.replaceAll(t,"").replace(/\s+/g," ").trim() : (prev ? `${prev} ${t}` : t));
-  }
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   async function save() {
-    const g = await groupPromise;
-    if (!g) return;
-    const now = new Date().toISOString();
-    const uuid = crypto.randomUUID();
-    const rec: RecordRow = {
-      uuid,
-      group_id: g.group_id,
-      user_uuid: user.uuid,
-      temp,
-      memo,
-      measured_at: new Date(measuredAt).toISOString(),
-      is_deleted: 0,
-      updated_at: now,
-    };
-    await LocalDb.upsertRecord(rec);
+    if (!temp) return;
+    const v = Number(temp);
+    if (!Number.isFinite(v)) return;
 
-    // 投薬イベント & 次回予定生成
-    const selected = Object.entries(selectedMed).filter(([,v])=>v).map(([k])=>k);
-    const medMap = new Map(meds.map(m => [m.uuid, m]));
-
-    for (const medId of selected) {
-      const ev: EventRow = {
+    try {
+      setSaving(true);
+      // addRecord ではなく upsertRecord を使用
+      const now = new Date().toISOString();
+      const newRecord: RecordRow = {
         uuid: crypto.randomUUID(),
-        group_id: g.group_id,
         user_uuid: user.uuid,
-        event_type: "medication",
-        occurred_at: rec.measured_at,
-        payload: medId,
-        is_deleted: 0,
+        group_id: user.group_id,
+        temp: v,
+        measured_at: now,
         updated_at: now,
+        is_deleted: 0,
       };
-      await LocalDb.upsertEvent(ev);
+      await LocalDb.upsertRecord(newRecord);
       
-      const m = medMap.get(medId);
-      if (m) {
-        await ensureNextReminder(user.uuid, medId, rec.measured_at, m.default_interval_hours);
-      }
-    }
-
-    alert("保存しました");
-    onClose();
-    onSaved();
-
-    if (temp >= 38.5) {
-      setTimeout(() => alert("高熱です。水分補給・受診目安の確認などを行ってください。"), 300);
+      onSaved();
+      onClose();
+    } finally {
+      setSaving(false);
     }
   }
 
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "grid", placeItems: "center", padding: 12, zIndex: 1000 }}>
-      <div style={{ width: "min(640px, 100%)", background: "white", borderRadius: 14, padding: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontWeight: 800 }}>{user.name}さんの記録</div>
-          <button onClick={onClose}>閉じる</button>
+  return createPortal(
+    <div style={styles.overlay} onClick={onClose}>
+      <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.header}>
+          <div style={styles.handle} />
+          <div style={styles.title}>{user.name}</div>
         </div>
-        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-          <label>
-            体温（℃）
-            <input type="number" step="0.1" value={temp} onChange={(e)=>setTemp(Number(e.target.value))} style={{ width: "100%" }} />
-          </label>
-          <label>
-            日時
-            <input type="datetime-local" value={measuredAt} onChange={(e)=>setMeasuredAt(e.target.value)} style={{ width: "100%" }} />
-          </label>
-          <div>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>メモ</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
-              {memoTemplates.map(t => (
-                <button key={t} onClick={()=>toggleTemplate(t)} style={{ padding: "6px 10px", borderRadius: 999, border: "1px solid #ddd" }}>{t}</button>
-              ))}
-            </div>
-            <textarea value={memo} onChange={(e)=>setMemo(e.target.value)} rows={2} style={{ width: "100%" }} />
+        <div style={styles.body}>
+          <div style={styles.tempDisplay}>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              placeholder="36.5"
+              value={temp}
+              onChange={(e) => setTemp(e.target.value)}
+              style={styles.tempInput}
+              autoFocus
+            />
+            <span style={styles.unit}>℃</span>
           </div>
-          <div>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>投薬</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {meds.length === 0 ?
-                <div style={{ opacity: 0.7 }}>薬が登録されていません（メンバー画面で追加）</div> :
-                meds.map(m => (
-                  <label key={m.uuid} style={{ display: "flex", gap: 6, alignItems: "center", border: "1px solid #ddd", borderRadius: 999, padding: "6px 10px" }}>
-                    <input type="checkbox" checked={!!selectedMed[m.uuid]} onChange={(e)=>setSelectedMed(s=>({ ...s, [m.uuid]: e.target.checked }))} />
-                    {m.name}
-                  </label>
-                ))
-              }
-            </div>
-          </div>
-          <button onClick={save} style={{ padding: 12, borderRadius: 12, fontWeight: 800 }}>記録する</button>
+          <div style={styles.hint}>例：36.5</div>
+          
+          <button
+            type="button"
+            onClick={save}
+            disabled={!temp || saving}
+            style={{
+              ...styles.primaryBtn,
+              opacity: !temp || saving ? 0.5 : 1,
+            }}
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+          
+          <button type="button" onClick={onClose} style={styles.secondaryBtn}>
+            キャンセル
+          </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
+
+const styles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.4)",
+    zIndex: 1000,
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+  sheet: {
+    width: "100%",
+    maxWidth: 520,
+    background: "white",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 16,
+    boxShadow: "0 -10px 24px rgba(0,0,0,0.25)",
+    animation: "slideUp 0.2s ease-out",
+  },
+  header: {
+    paddingTop: 8,
+    paddingBottom: 12,
+    display: "grid",
+    gap: 8,
+    justifyItems: "center",
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    borderRadius: 999,
+    background: "rgba(0,0,0,0.25)",
+  },
+  title: {
+    fontSize: 16,
+    fontWeight: 800,
+  },
+  body: {
+    padding: "0 20px",
+    display: "grid",
+    gap: 12,
+  },
+  tempDisplay: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 8,
+  },
+  tempInput: {
+    fontSize: 48,
+    fontWeight: 900,
+    textAlign: "right",
+    width: 140,
+    border: "none",
+    outline: "none",
+  },
+  unit: {
+    fontSize: 24,
+    fontWeight: 700,
+  },
+  hint: {
+    textAlign: "center",
+    fontSize: 12,
+    opacity: 0.6,
+  },
+  primaryBtn: {
+    marginTop: 10,
+    width: "100%",
+    height: 48,
+    borderRadius: 14,
+    border: "none",
+    background: "#66A9D9",
+    color: "white",
+    fontSize: 16,
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+  secondaryBtn: {
+    width: "100%",
+    height: 44,
+    borderRadius: 14,
+    border: "1px solid rgba(0,0,0,0.2)",
+    background: "white",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+};

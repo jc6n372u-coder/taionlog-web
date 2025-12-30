@@ -46,7 +46,7 @@ export async function listUsers(group_id: string): Promise<User[]> {
   const db = await getDb();
   const all = await db.getAll("users");
   return all.filter(x => x.group_id === group_id && x.is_deleted === 0)
-            .sort((a,b)=>(a.display_order??0)-(b.display_order??0));
+            .sort((a,b)=>(a.order_index ?? a.display_order ?? 0) - (b.order_index ?? b.display_order ?? 0));
 }
 
 export async function upsertUser(row: User) {
@@ -59,6 +59,23 @@ export async function softDeleteUser(uuid: string) {
   const cur = await db.get("users", uuid);
   if (!cur) return;
   await db.put("users", { ...cur, is_deleted: 1, updated_at: nowISO() });
+}
+
+export async function deleteUser(uuid: string) {
+  // 物理削除ではなく論理削除に統一
+  await softDeleteUser(uuid);
+}
+
+// ★追加：並び順の一括保存
+export async function updateUserOrder(items: { uuid: string; order_index: number }[]) {
+  const db = await getDb();
+  const tx = db.transaction("users", "readwrite");
+  for (const it of items) {
+    const cur = await tx.store.get(it.uuid);
+    if (!cur) continue;
+    await tx.store.put({ ...cur, order_index: it.order_index, updated_at: nowISO() });
+  }
+  await tx.done;
 }
 
 export async function listRecords(user_uuid: string): Promise<RecordRow[]> {
@@ -174,7 +191,7 @@ export async function pruneLocalEventsIfNeeded(groupId: string, maxCount: number
 export const LocalDb = {
   getMeta, setMeta, getCurrentGroup, setCurrentGroup,
   getSettings, upsertSettings, ensureSettings,
-  listUsers, upsertUser, softDeleteUser,
+  listUsers, upsertUser, softDeleteUser, deleteUser, updateUserOrder, // ★ここに追加
   listRecords, upsertRecord,
   listMedications, getMedications, upsertMedication, deleteMedication,
   listEvents, upsertEvent,
