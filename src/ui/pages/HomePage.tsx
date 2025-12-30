@@ -1,279 +1,115 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
-import type { RecordRow, SettingsRow, User } from "../../utils/types";
-import { maskTemp } from "../../utils/privacy";
-import { InAppNotices } from "../components/InAppNotices";
-import { RecordModal } from "../components/RecordModal";
-import { syncNow } from "../../services/syncService"; // パス修正済み
-
-type Latest = { user_uuid: string; temp: number; measured_at: string } | null;
-
-function calcAgeLabel(birth_date?: string | null) {
-  if (!birth_date) return "";
-  try {
-    const birth = new Date(birth_date);
-    const now = new Date();
-    let years = now.getFullYear() - birth.getFullYear();
-    let months = now.getMonth() - birth.getMonth();
-    if (now.getDate() < birth.getDate()) months -= 1;
-    if (months < 0) {
-      years -= 1;
-      months += 12;
-    }
-    if (years < 1) return `${months}ヶ月`;
-    return `${years}歳`;
-  } catch {
-    return "";
-  }
-}
-
-function formatDaysAgo(iso?: string) {
-  if (!iso) return "";
-  try {
-    const d = new Date(iso);
-    const now = new Date();
-    const ms = now.getTime() - d.getTime();
-    const days = Math.floor(ms / (1000 * 60 * 60 * 24));
-    if (days <= 0) return "今日";
-    if (days === 1) return "昨日";
-    return `${days}日前`;
-  } catch {
-    return "";
-  }
-}
-
-function tempColor(temp?: number | null) {
-  if (temp == null) return "#666666";
-  if (temp >= 38.0) return "#E57373"; // danger
-  if (temp >= 37.5) return "#FFB74D"; // warning
-  return "#4CAF50"; // chartGreen
-}
+import { useSync } from "../../services/sync/syncService";
+import type { User, RecordRow } from "../../utils/types";
 
 export default function HomePage() {
   const nav = useNavigate();
-  const [group, setGroup] = useState<{ group_id: string; group_name: string } | null>(null);
+  const { syncState, runSync } = useSync();
+  
   const [users, setUsers] = useState<User[]>([]);
-  const [settings, setSettings] = useState<SettingsRow | null>(null);
-  const [latest, setLatest] = useState<Record<string, Latest>>({});
-  const [selected, setSelected] = useState<User | null>(null);
-  const [syncState, setSyncState] = useState<string>("");
-  const [syncBusy, setSyncBusy] = useState(false);
-
-  async function reload() {
-    const g = await LocalDb.getCurrentGroup();
-    if (!g) {
-      nav("/onboarding");
-      return;
-    }
-    setGroup(g);
-    const us = await LocalDb.listUsers(g.group_id);
-    setUsers(us);
-    const s = await LocalDb.ensureSettings(g.group_id);
-    setSettings(s);
-
-    // 直近体温（ユーザーごと：最新1件）
-    const map: Record<string, Latest> = {};
-    for (const u of us) {
-      const recs: RecordRow[] = await LocalDb.listRecords(u.uuid);
-      const r = recs[0];
-      map[u.uuid] = r ? { user_uuid: u.uuid, temp: r.temp, measured_at: r.measured_at } : null;
-    }
-    setLatest(map);
-
-    const lastSync = await LocalDb.getMeta("last_sync");
-    setSyncState(lastSync ? `最終同期: ${new Date(lastSync).toLocaleString()}` : "未同期");
-  }
+  const [records, setRecords] = useState<RecordRow[]>([]);
+  const [selUser, setSelUser] = useState<string>("");
 
   useEffect(() => {
-    void reload();
+    loadData();
   }, []);
 
-  async function doSync() {
-    try {
-      setSyncBusy(true);
-      const r = await syncNow();
-      setSyncState(r.success ? `同期OK（push:${r.pushed}, pull:${r.pulled}）` : `同期失敗: ${r.error}`);
-      await reload();
-    } finally {
-      setSyncBusy(false);
+  async function loadData() {
+    const g = await LocalDb.getCurrentGroup();
+    if (!g) return nav("/onboarding");
+    
+    const us = await LocalDb.listUsers(g.group_id);
+    setUsers(us);
+    if (us.length > 0 && !selUser) setSelUser(us[0].uuid);
+
+    // 全員の最新体温を取得して表示する
+    const allRecs: RecordRow[] = [];
+    for (const u of us) {
+      const recs = await LocalDb.listRecords(u.uuid);
+      if (recs.length > 0) {
+        // 日付降順にならべて最新を取得
+        recs.sort((a,b) => new Date(b.measured_at).getTime() - new Date(a.measured_at).getTime());
+        allRecs.push(recs[0]);
+      }
     }
+    setRecords(allRecs);
   }
 
-  const showTemp = settings?.show_temp_on_home ?? true;
-
-  // 「＋」ボタン：最後にタップした人がいればその人、いなければ先頭の人
-  const fabTarget = useMemo(() => {
-    if (selected) return selected;
-    return users[0] ?? null;
-  }, [selected, users]);
+  const handleSync = async () => {
+    await runSync();
+    await loadData();
+  };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#F5F5F5" }}>
-      {/* AppBar */}
-      <div
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 10,
-          background: "#66A9D9", // Flutter Blue
-          color: "white",
-          padding: "12px 12px 10px",
-          boxShadow: "0 1px 0 rgba(0,0,0,0.08)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ minWidth: 44 }} />
-          <div style={{ textAlign: "center", lineHeight: 1.2 }}>
-            <div style={{ fontWeight: 900, fontSize: 16 }}>{group?.group_name ?? "たいおんログ"}</div>
-            <div style={{ fontSize: 11, opacity: 0.9 }}>{syncState}</div>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", minWidth: 44 }}>
-            <button
-              onClick={doSync}
-              disabled={syncBusy}
-              style={{
-                background: "rgba(255,255,255,0.18)",
-                color: "white",
-                border: "1px solid rgba(255,255,255,0.35)",
-                borderRadius: 10,
-                padding: "8px 10px",
-                fontWeight: 800,
-                cursor: syncBusy ? "not-allowed" : "pointer",
-              }}
-            >
-              {syncBusy ? "同期中…" : "同期"}
-            </button>
-          </div>
+    <div style={styles.page}>
+      {/* 青いヘッダー (AppBar) */}
+      <header style={styles.appBar}>
+        <div style={styles.appBarLeft}>
+            <span style={{fontWeight:"bold", fontSize: 18}}>たいおんログ</span>
         </div>
-      </div>
-
-      {/* Body */}
-      <div style={{ padding: 12, display: "grid", gap: 12, maxWidth: 680, margin: "0 auto" }}>
-        <InAppNotices />
-
-        {/* quick actions */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Link
-            to="/members"
-            style={{
-              textDecoration: "none",
-              background: "white",
-              border: "1px solid #e5e5e5",
-              borderRadius: 12,
-              padding: "10px 12px",
-              fontWeight: 800,
-              color: "#333",
-            }}
-          >
-            メンバー編集
-          </Link>
-          <Link
-            to="/settings"
-            style={{
-              textDecoration: "none",
-              background: "white",
-              border: "1px solid #e5e5e5",
-              borderRadius: 12,
-              padding: "10px 12px",
-              fontWeight: 800,
-              color: "#333",
-            }}
-          >
-            設定
-          </Link>
-          <Link
-            to="/chart"
-            style={{
-              textDecoration: "none",
-              background: "white",
-              border: "1px solid #e5e5e5",
-              borderRadius: 12,
-              padding: "10px 12px",
-              fontWeight: 800,
-              color: "#333",
-            }}
-          >
-            グラフ
-          </Link>
+        <div style={styles.appBarRight}>
+          <button onClick={handleSync} disabled={syncState.isLoading} style={styles.iconBtn}>
+             {syncState.isLoading ? "..." : "同期"}
+          </button>
+          <button onClick={() => nav("/settings")} style={styles.iconBtn}>設定</button>
         </div>
+      </header>
 
-        {/* member list */}
-        <div style={{ display: "grid", gap: 10 }}>
-          {users.map((u) => {
-            const lt = latest[u.uuid];
-            const tempText = lt ? (showTemp ? `${lt.temp.toFixed(1)}℃` : `${maskTemp(lt.temp)}℃`) : "—";
-            const dayText = lt ? formatDaysAgo(lt.measured_at) : "未記録";
-            const age = calcAgeLabel((u as any).birth_date);
-
-            return (
-              <button
-                key={u.uuid}
-                onClick={() => setSelected(u)}
-                style={{
-                  textAlign: "left",
-                  padding: 12,
-                  borderRadius: 12,
-                  border: "1px solid #e5e5e5",
-                  background: "white",
-                  boxShadow: "0 2px 6px rgba(0,0,0,0.06)",
-                  cursor: "pointer",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-                  <div style={{ display: "grid", gap: 4 }}>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                      <div style={{ fontWeight: 900, fontSize: 16, color: "#333" }}>{u.name}</div>
-                      {age && <div style={{ fontSize: 12, opacity: 0.7, color: "#333" }}>{age}</div>}
+      <main style={styles.body}>
+        {/* カード：最新の体温一覧 */}
+        <div style={styles.card}>
+            <div style={styles.cardHeader}>
+                <span>最新の記録</span>
+                <button onClick={() => nav("/chart")} style={styles.linkBtn}>グラフを見る →</button>
+            </div>
+            {users.map(u => {
+                const rec = records.find(r => r.user_uuid === u.uuid);
+                return (
+                    <div key={u.uuid} style={styles.row}>
+                        <div style={styles.userName}>{u.name}</div>
+                        <div style={styles.temp}>
+                            {rec ? `${rec.temp.toFixed(1)}℃` : "—"}
+                        </div>
+                        <div style={styles.date}>
+                            {rec ? new Date(rec.measured_at).toLocaleDateString() : ""}
+                        </div>
                     </div>
-                    <div style={{ fontSize: 12, opacity: 0.75, color: "#333" }}>{dayText}</div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div
-                      style={{
-                        fontWeight: 900,
-                        fontSize: 20,
-                        color: tempColor(lt?.temp ?? null),
-                      }}
-                    >
-                      {tempText}
-                    </div>
-                    <div style={{ fontSize: 11, opacity: 0.65, color: "#333" }}>タップで記録</div>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
+                );
+            })}
         </div>
-      </div>
-
-      {/* Floating Action Button */}
-      <button
-        onClick={() => {
-          if (fabTarget) setSelected(fabTarget);
-        }}
-        disabled={!fabTarget}
-        title={fabTarget ? `${fabTarget.name}の記録` : "メンバーがいません"}
-        style={{
-          position: "fixed",
-          right: 18,
-          bottom: 18,
-          width: 56,
-          height: 56,
-          borderRadius: 28,
-          border: "none",
-          background: "#FF6B35",
-          color: "white",
-          fontSize: 28,
-          fontWeight: 900,
-          boxShadow: "0 8px 18px rgba(0,0,0,0.22)",
-          cursor: fabTarget ? "pointer" : "not-allowed",
-        }}
-      >
-        +
-      </button>
-
-      {selected && <RecordModal user={selected} onClose={() => setSelected(null)} onSaved={reload} />}
+        
+        {/* アクションボタン */}
+        <button onClick={() => nav("/chart")} style={styles.fab}>
+          グラフ画面へ
+        </button>
+      </main>
     </div>
   );
 }
+
+const styles: Record<string, React.CSSProperties> = {
+  page: { minHeight: "100dvh", background: "#f4f5f7", display: "flex", flexDirection: "column" },
+  appBar: {
+    height: 56, background: "#66A9D9", color: "white", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.1)", position: "sticky", top: 0, zIndex: 10
+  },
+  appBarLeft: { display: "flex", alignItems: "center", gap: 8 },
+  appBarRight: { display: "flex", gap: 16 },
+  iconBtn: { background: "transparent", border: "none", color: "white", fontSize: 14, cursor: "pointer", fontWeight: "bold" },
+  body: { padding: 16, flex: 1 },
+  card: { background: "white", borderRadius: 12, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.1)" },
+  cardHeader: { display: "flex", justifyContent: "space-between", marginBottom: 12, fontSize: 14, color: "#666" },
+  linkBtn: { background: "transparent", border: "none", color: "#66A9D9", cursor: "pointer" },
+  row: { display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #eee" },
+  userName: { flex: 1, fontWeight: "bold", color: "#333" },
+  temp: { fontSize: 18, fontWeight: "bold", color: "#66A9D9", marginRight: 12 },
+  date: { fontSize: 12, color: "#999" },
+  fab: {
+    position: "fixed", bottom: 24, right: 24,
+    background: "#66A9D9", color: "white", border: "none", borderRadius: 28,
+    padding: "16px 24px", fontSize: 16, fontWeight: "bold",
+    boxShadow: "0 4px 12px rgba(102, 169, 217, 0.4)", cursor: "pointer"
+  }
+};

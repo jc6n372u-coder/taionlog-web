@@ -1,10 +1,12 @@
-﻿import { LocalDb } from "../data/local/localDb";
-import { getDb } from "../data/local/db";
-import { ApiClient } from "../data/remote/apiClient";
-import type { PushData } from "../utils/types";
+import { useState } from "react";
+import { LocalDb } from "../../data/local/localDb";
+import { getDb } from "../../data/local/db";
+import { ApiClient } from "../../data/remote/apiClient";
+import type { PushData } from "../../utils/types";
 
 export type SyncResult = { success: true; pushed: number; pulled: number } | { success: false; error: string };
 
+// データの競合解決ロジック（既存コード維持）
 async function guardedUpsert(store: "users"|"records"|"medications"|"events"|"reminders", rows: any[]) {
   const db = await getDb();
   const tx = db.transaction(store as any, "readwrite");
@@ -22,6 +24,7 @@ async function guardedUpsert(store: "users"|"records"|"medications"|"events"|"re
   await tx.done;
 }
 
+// 同期処理本体（既存コード維持）
 export async function syncNow(): Promise<SyncResult> {
   try {
     const cg = await LocalDb.getCurrentGroup();
@@ -31,6 +34,11 @@ export async function syncNow(): Promise<SyncResult> {
 
     const s = await LocalDb.getSettings(cg.group_id);
     
+    // LocalDbの実装によっては getUpdatedRows がない場合のエラー回避
+    if (!LocalDb.getUpdatedRows) {
+        throw new Error("LocalDb.getUpdatedRows is not implemented");
+    }
+
     const push: PushData = {
       users: await LocalDb.getUpdatedRows(cg.group_id, lastSync, "users"),
       records: await LocalDb.getUpdatedRows(cg.group_id, lastSync, "records"),
@@ -60,7 +68,9 @@ export async function syncNow(): Promise<SyncResult> {
     const pushCount = Object.values(pushed).reduce((s, v) => s + (typeof v === "number" ? v : 0), 0);
 
     try {
-      await LocalDb.pruneLocalEventsIfNeeded(cg.group_id, 10000);
+      if (LocalDb.pruneLocalEventsIfNeeded) {
+        await LocalDb.pruneLocalEventsIfNeeded(cg.group_id, 10000);
+      }
     } catch (e) {
       console.warn("Auto prune failed:", e);
     }
@@ -68,6 +78,32 @@ export async function syncNow(): Promise<SyncResult> {
     return { success: true, pushed: pushCount, pulled: pullCount };
   } catch (e: any) {
     const msg = (e?.message ?? String(e)).replace("Exception: ", "");
+    console.error("Sync Error:", e);
     return { success: false, error: msg };
   }
+}
+
+// ★追加：新しいHomePage画面で使うためのフック
+export function useSync() {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const runSync = async () => {
+    if (isLoading) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await syncNow();
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+    } catch (e: any) {
+      setError(e.message);
+      alert("同期エラー: " + e.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return { syncState: { isLoading, error }, runSync };
 }
