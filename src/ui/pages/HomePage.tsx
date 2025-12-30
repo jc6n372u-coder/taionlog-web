@@ -2,136 +2,135 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import { useSync } from "../../services/sync/syncService";
-import TempChart from "../components/TempChart";
+import type { User, RecordRow, SettingsRow } from "../../utils/types";
+import { RecordModal } from "../components/RecordModal";
 
-type UserExt = {
-  uuid: string; name: string; icon?: string; color?: string; order_index?: number;
-};
+function formatRelativeDate(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  const dayDiff = Math.floor(diff / (1000 * 60 * 60 * 24));
+  
+  const week = ["日","月","火","水","木","金","土"];
+  const dateStr = `${d.getMonth()+1}/${d.getDate()}(${week[d.getDay()]})`;
+
+  if (dayDiff === 0) return `${dateStr} 今日`;
+  if (dayDiff === 1) return `${dateStr} 昨日`;
+  return `${dateStr} ${dayDiff}日前`;
+}
 
 export default function HomePage() {
   const nav = useNavigate();
-  const { runSync, syncState } = useSync();
-  const [users, setUsers] = useState<UserExt[]>([]);
-  const [activeUser, setActiveUser] = useState<UserExt | null>(null);
-  const [showMemberSelect, setShowMemberSelect] = useState(false);
-  const [dateOffset, setDateOffset] = useState(0); 
+  const { syncState, runSync } = useSync();
+  
+  const [users, setUsers] = useState<User[]>([]);
+  const [records, setRecords] = useState<RecordRow[]>([]);
+  const [settings, setSettings] = useState<SettingsRow | null>(null);
+  
+  const [selectedUserForModal, setSelectedUserForModal] = useState<User | null>(null);
+  const [showMemberMenu, setShowMemberMenu] = useState(false);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+  }, []);
 
-  const loadData = async () => {
-    const group = await LocalDb.getCurrentGroup();
+  async function loadData() {
+    const g = await LocalDb.getCurrentGroup();
+    if (!g) return nav("/onboarding");
     
-    // ★ここが最大の修正点★
-    // グループが見つからなくても、絶対にリダイレクトさせない（コンソール警告のみ）
-    if (!group) {
-        console.warn("Group not found in HomePage (Loop prevention)");
-        return; 
-    }
-
-    const us = await LocalDb.listUsers(group.group_id);
-    if (us.length === 0) return;
+    const s = await LocalDb.ensureSettings(g.group_id);
+    setSettings(s);
     
-    // @ts-ignore
-    const sorted = us.sort((a,b) => (a.order_index ?? 0) - (b.order_index ?? 0));
-    setUsers(sorted as any);
-    setActiveUser(sorted[0] as any);
-  };
+    const us = await LocalDb.listUsers(g.group_id);
+    setUsers(us);
 
-  const handleSync = async () => { await runSync(); loadData(); };
-
-  const getDisplayDate = () => {
-    const d = new Date(); d.setDate(d.getDate() + dateOffset);
-    if (dateOffset === 0) return "今日";
-    if (dateOffset === -1) return "昨日";
-    return `${d.getMonth()+1}/${d.getDate()}`;
-  };
-
-  const handleFabClick = () => {
-    if (users.length === 1) {
-        nav(`/input/${users[0].uuid}?medication_only=true`);
-    } else {
-        setShowMemberSelect(true);
+    const allRecs: RecordRow[] = [];
+    for (const u of us) {
+      const recs = await LocalDb.listRecords(u.uuid);
+      if (recs.length > 0) {
+        // @ts-ignore
+        recs.sort((a,b) => new Date(b.measured_at).getTime() - new Date(a.measured_at).getTime());
+        allRecs.push(recs[0]);
+      }
     }
+    setRecords(allRecs);
+  }
+
+  const handleSync = async () => {
+    await runSync();
+    await loadData();
   };
 
-  const renderUserIcon = (u: UserExt, size: number = 24) => {
-    const bgColor = u.color || "#ccc";
-    const text = u.icon || u.name.slice(0, 1);
-    return (
-        <div style={{
-            width: size, height: size, borderRadius: "50%", background: bgColor, color: "white", 
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: size * 0.6, fontWeight: "bold", flexShrink: 0
-        }}>{text}</div>
-    );
+  const openRecordModal = (u: User) => {
+    setShowMemberMenu(false);
+    setSelectedUserForModal(u);
   };
 
   return (
     <div style={{minHeight: "100dvh", background: "#f4f5f7", display: "flex", flexDirection: "column"}}>
-      <header style={{height: 56, background: "white", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", boxShadow: "0 1px 2px rgba(0,0,0,0.05)"}}>
-        <div style={{fontWeight: "bold", fontSize: 18, color: "#66A9D9", display: "flex", alignItems: "center", gap: 8}}>
-            {activeUser && renderUserIcon(activeUser, 28)}
-            たいおんログ
+      <header style={{height: 56, background: "#66A9D9", color: "white", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)", position: "sticky", top: 0, zIndex: 10}}>
+        <div style={{display: "flex", alignItems: "center", gap: 8}}>
+            <span style={{fontWeight:"bold", fontSize: 18}}>たいおんログ</span>
         </div>
         <div style={{display: "flex", gap: 16}}>
-          <button onClick={handleSync} style={{border: "none", background: "transparent", fontSize: 20}}>{syncState.isLoading ? "..." : "🔄"}</button>
-          <button onClick={() => nav("/settings")} style={{border: "none", background: "transparent", fontSize: 20}}>⚙️</button>
+          <button onClick={handleSync} disabled={syncState.isLoading} style={{background: "transparent", border: "none", color: "white", fontSize: 14, cursor: "pointer", fontWeight: "bold"}}>
+             {syncState.isLoading ? "..." : "同期"}
+          </button>
+          <button onClick={() => nav("/settings")} style={{background: "transparent", border: "none", color: "white", fontSize: 14, cursor: "pointer", fontWeight: "bold"}}>設定</button>
         </div>
       </header>
 
-      {users.length > 0 && (
-        <div style={{display: "flex", overflowX: "auto", background: "white", padding: "0 8px", borderBottom: "1px solid #eee"}}>
-          {users.map(u => {
-            const isActive = activeUser?.uuid === u.uuid;
-            return (
-              <button key={u.uuid} onClick={() => setActiveUser(u)}
-                style={{
-                  flex: 1, minWidth: 80, padding: "12px 4px", border: "none", background: "transparent",
-                  borderBottom: isActive ? "3px solid #66A9D9" : "3px solid transparent",
-                  fontWeight: isActive ? "bold" : "normal", color: isActive ? "#66A9D9" : "#999",
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6
-                }}>
-                {renderUserIcon(u, 20)}
-                {u.name}
-              </button>
-            );
-          })}
+      <main style={{padding: 16, flex: 1}}>
+        <div style={{background: "white", borderRadius: 12, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.1)"}}>
+            <div style={{display: "flex", justifyContent: "space-between", marginBottom: 12, fontSize: 14, color: "#666"}}>
+                <span>最新の記録</span>
+                <button onClick={() => nav("/chart")} style={{background: "transparent", border: "none", color: "#66A9D9", cursor: "pointer"}}>グラフを見る →</button>
+            </div>
+            {users.length === 0 && <div style={{padding:20, textAlign:"center", color:"#999"}}>メンバーがいません<br/>設定から追加してください</div>}
+            
+            {users.map(u => {
+                const rec = records.find(r => r.user_uuid === u.uuid);
+                const showTemp = settings?.show_temp_on_home ?? true;
+                const tempStr = rec ? (showTemp ? `${rec.temp.toFixed(1)}℃` : "**.*℃") : "—";
+
+                return (
+                    <div key={u.uuid} style={{display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #eee", cursor: "pointer"}} onClick={() => openRecordModal(u)}>
+                        <div style={{flex: 1, fontWeight: "bold", color: "#333"}}>{u.name}</div>
+                        <div style={{fontSize: 18, fontWeight: "bold", color: "#66A9D9", marginRight: 12}}>{tempStr}</div>
+                        <div style={{fontSize: 12, color: "#999"}}>
+                            {rec ? formatRelativeDate(rec.measured_at) : "未記録"}
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+      </main>
+
+      <button onClick={() => setShowMemberMenu(true)} style={{position: "fixed", bottom: 24, right: 24, background: "#FF6B35", color: "white", border: "none", borderRadius: 28, width: 56, height: 56, fontSize: 28, fontWeight: "bold", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", paddingBottom: 4}}>＋</button>
+
+      {showMemberMenu && (
+        <div style={{position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "flex-end"}} onClick={() => setShowMemberMenu(false)}>
+            <div style={{width: "100%", background: "white", borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: "20px 16px", display: "flex", flexDirection: "column", gap: 12}} onClick={e => e.stopPropagation()}>
+                <div style={{textAlign: "center", fontWeight: "bold", color: "#666", marginBottom: 8}}>誰の記録をつけますか？</div>
+                {users.map(u => (
+                    <button key={u.uuid} onClick={() => openRecordModal(u)} style={{padding: 16, background: "#f4f5f7", border: "none", borderRadius: 12, fontSize: 16, fontWeight: "bold", color: "#333", cursor: "pointer"}}>
+                        {u.name}
+                    </button>
+                ))}
+                <button onClick={() => setShowMemberMenu(false)} style={{padding: 16, background: "white", border: "1px solid #ddd", borderRadius: 12, fontSize: 16, color: "#666", cursor: "pointer"}}>キャンセル</button>
+            </div>
         </div>
       )}
 
-      <main style={{flex: 1, padding: 16, overflowY: "auto"}}>
-        <div style={{display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20}}>
-            <button onClick={() => setDateOffset(d => d - 1)} style={{border: "none", background: "white", width: 40, height: 40, borderRadius: 20}}>◀</button>
-            <div style={{margin: "0 20px", fontSize: 18, fontWeight: "bold", color: "#444"}}>{getDisplayDate()}</div>
-            <button onClick={() => setDateOffset(d => d + 1)} disabled={dateOffset === 0} style={{border: "none", background: "white", width: 40, height: 40, borderRadius: 20, opacity: dateOffset===0?0.3:1}}>▶</button>
-        </div>
-
-        <div style={{background: "white", borderRadius: 16, padding: 16, marginBottom: 20, minHeight: 250}}>
-            {activeUser ? <TempChart userUuid={activeUser.uuid} dateOffset={dateOffset} /> : <div style={{textAlign:"center", marginTop: 100}}>データがありません</div>}
-        </div>
-
-        <button onClick={() => activeUser && nav(`/input/${activeUser.uuid}`)}
-            style={{width: "100%", padding: 16, background: "#66A9D9", color: "white", border: "none", borderRadius: 16, fontSize: 18, fontWeight: "bold", display: "flex", alignItems: "center", justifyContent: "center", gap: 8}}>
-            <span>📝</span>{activeUser ? `${activeUser.name}の記録をつける` : "記録をつける"}
-        </button>
-      </main>
-
-      <button onClick={handleFabClick} style={{position: "fixed", bottom: 24, right: 24, width: 56, height: 56, borderRadius: 28, background: "#FF6B35", color: "white", border: "none", fontSize: 24, zIndex: 50}}>💊</button>
-
-      {showMemberSelect && (
-        <div style={{position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100}} onClick={() => setShowMemberSelect(false)}>
-            <div style={{background: "white", width: 300, borderRadius: 16, padding: 24}} onClick={e => e.stopPropagation()}>
-                <h3 style={{marginTop: 0, textAlign: "center"}}>誰のお薬ですか？</h3>
-                <div style={{display: "flex", flexDirection: "column", gap: 12, marginTop: 20}}>
-                    {users.map(u => (
-                        <button key={u.uuid} onClick={() => { setShowMemberSelect(false); nav(`/input/${u.uuid}?medication_only=true`); }}
-                            style={{padding: 12, borderRadius: 12, border: "1px solid #eee", background: "white", display: "flex", alignItems: "center", gap: 12, fontSize: 16}}>
-                            {renderUserIcon(u, 32)}{u.name}
-                        </button>
-                    ))}
-                </div>
-            </div>
-        </div>
+      {selectedUserForModal && (
+        <RecordModal 
+            user={selectedUserForModal} 
+            onClose={() => setSelectedUserForModal(null)} 
+            onSaved={() => {
+                setSelectedUserForModal(null);
+                loadData();
+            }} 
+        />
       )}
     </div>
   );
