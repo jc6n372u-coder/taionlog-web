@@ -71,7 +71,8 @@ export default function TemperatureMedicationChart({ temperatures, medications }
                 if (context.dataset.label === "薬") {
                     // 修正1で埋め込んだ medName を取り出す
                     const medName = context.raw.medName;
-                    return `💊 ${medName || "薬"}`;
+                    // ★修正: 絵文字(💊)を削除し、名前だけを返す
+                    return `${medName || "薬"}`;
                 }
                 // 体温の場合
                 return `${context.dataset.label}: ${context.parsed.y}℃`;
