@@ -21,14 +21,16 @@ export default function HomePage() {
   const loadData = async () => {
     const group = await LocalDb.getCurrentGroup();
     
-    // ★修正: ここでリダイレクトすると無限ループになるため、returnのみに変更
+    // ★ここが最大の修正点★
+    // グループが見つからなくても、絶対にリダイレクトさせない（コンソール警告のみ）
     if (!group) {
-        console.warn("Group not found in HomePage");
+        console.warn("Group not found in HomePage (Loop prevention)");
         return; 
     }
 
     const us = await LocalDb.listUsers(group.group_id);
     if (us.length === 0) return;
+    
     // @ts-ignore
     const sorted = us.sort((a,b) => (a.order_index ?? 0) - (b.order_index ?? 0));
     setUsers(sorted as any);
