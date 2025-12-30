@@ -6,10 +6,11 @@ import type { PushData } from "../../utils/types";
 
 export type SyncResult = { success: true; pushed: number; pulled: number } | { success: false; error: string };
 
-// データの競合解決ロジック（既存コード維持）
-async function guardedUpsert(store: "users"|"records"|"medications"|"events"|"reminders", rows: any[]) {
+// ★修正: "groups" を追加して、グループ情報の保存を許可
+async function guardedUpsert(store: "users"|"records"|"medications"|"events"|"reminders"|"groups", rows: any[]) {
   const db = await getDb();
-  const tx = db.transaction(store as any, "readwrite");
+  // @ts-ignore dynamic store name
+  const tx = db.transaction(store, "readwrite");
   for (const r of rows) {
     const cur = await tx.store.get(r.uuid);
     if (!cur) {
@@ -24,7 +25,7 @@ async function guardedUpsert(store: "users"|"records"|"medications"|"events"|"re
   await tx.done;
 }
 
-// 同期処理本体（既存コード維持）
+// 同期処理本体
 export async function syncNow(): Promise<SyncResult> {
   try {
     const cg = await LocalDb.getCurrentGroup();
@@ -34,7 +35,6 @@ export async function syncNow(): Promise<SyncResult> {
 
     const s = await LocalDb.getSettings(cg.group_id);
     
-    // LocalDbの実装によっては getUpdatedRows がない場合のエラー回避
     if (!LocalDb.getUpdatedRows) {
         throw new Error("LocalDb.getUpdatedRows is not implemented");
     }
@@ -53,9 +53,13 @@ export async function syncNow(): Promise<SyncResult> {
     
     let pullCount = 0;
 
-    for (const key of ["users","records","medications","events","reminders"] as const) {
+    // ★修正: ここに "groups" を追加しました！
+    // これにより、サーバーから返ってきた「参加コード入りグループ情報」が処理されます
+    for (const key of ["users","records","medications","events","reminders","groups"] as const) {
+      // @ts-ignore
       const rows = (pulled as any)[key] as any[];
       if (rows?.length) {
+        // @ts-ignore
         await guardedUpsert(key, rows);
         pullCount += rows.length;
       }
@@ -83,7 +87,6 @@ export async function syncNow(): Promise<SyncResult> {
   }
 }
 
-// ★追加：新しいHomePage画面で使うためのフック
 export function useSync() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

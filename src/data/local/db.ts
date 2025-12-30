@@ -9,15 +9,16 @@ interface MyDB extends DBSchema {
   reminders: { key: string; value: Reminder; indexes: { "by_user": string; "by_group": string } };
   settings: { key: string; value: SettingsRow };
   meta: { key: string; value: { key: string; value: any } };
-  groups: { key: string; value: any }; // ★追加: groupsテーブルの定義
+  groups: { key: string; value: any }; // groupsテーブル定義
 }
 
 let _db: Promise<IDBPDatabase<MyDB>>;
 
 export function getDb() {
   if (!_db) {
-    // バージョンを 2 に設定
-    _db = openDB<MyDB>("taionlog-db", 2, {
+    // ★ここを「3」に変更してください！
+    // これにより、スマホが「おっ、新しい構造だ！」と気づいて groups テーブルを作成します。
+    _db = openDB<MyDB>("taionlog-db", 3, {
       upgrade(db, oldVersion, newVersion, tx) {
         if (!db.objectStoreNames.contains("users")) {
            const store = db.createObjectStore("users", { keyPath: "uuid" });
@@ -47,7 +48,7 @@ export function getDb() {
             db.createObjectStore("meta", { keyPath: "key" });
         }
         
-        // ★追加: groupsテーブルの作成処理
+        // groupsテーブルの作成処理
         if (!db.objectStoreNames.contains("groups")) {
             db.createObjectStore("groups", { keyPath: "uuid" });
         }
