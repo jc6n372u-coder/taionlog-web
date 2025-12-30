@@ -1,18 +1,17 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
-import { AppShell } from "../layouts/AppShell"; // もしAppShellを使わないなら独自ヘッダーでOK
 
 export default function MemberEditPage() {
   const nav = useNavigate();
   const [params] = useSearchParams();
-  const targetUuid = params.get("id"); // URLパラメータ ?id=... があれば編集、なければ新規
+  const targetUuid = params.get("id");
 
   const [name, setName] = useState("");
   const [birth, setBirth] = useState("");
   const [gender, setGender] = useState("未回答");
   const [allergy, setAllergy] = useState("");
-  const [history, setHistory] = useState(""); // 既往歴
+  const [history, setHistory] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -35,34 +34,31 @@ export default function MemberEditPage() {
   const save = async () => {
     if (!name.trim()) return alert("名前を入力してください");
     setIsSaving(true);
-    
     try {
       const g = await LocalDb.getCurrentGroup();
-      if (!g) throw new Error("グループが見つかりません");
-
-      const uuid = targetUuid || crypto.randomUUID();
-      const now = new Date().toISOString();
-
+      if (!g) return;
       await LocalDb.upsertUser({
-        uuid,
+        uuid: targetUuid || crypto.randomUUID(),
         group_id: g.group_id,
         name,
         birth_date: birth || null,
         gender,
         allergy,
-        history, // 既往歴
+        history,
         is_deleted: 0,
-        updated_at: now,
-        // 新規の場合は末尾に追加するためのorderなどが必要だが今回は省略
+        updated_at: new Date().toISOString(),
       });
-      
-      alert("保存しました");
-      nav(-1); // 戻る
-    } catch (e) {
-      alert("エラーが発生しました");
-      console.error(e);
+      nav(-1);
+    } catch {
       setIsSaving(false);
+      alert("エラー");
     }
+  };
+
+  const doDelete = async () => {
+      if (!targetUuid || !confirm("本当にこのメンバーを削除しますか？\n過去の記録も表示されなくなります。")) return;
+      await LocalDb.deleteUser(targetUuid);
+      nav(-1);
   };
 
   return (
@@ -73,57 +69,34 @@ export default function MemberEditPage() {
       </header>
 
       <main style={{padding: 16, display: "grid", gap: 16}}>
-        <Section title="基本情報">
-          <Input label="名前" value={name} onChange={setName} placeholder="例：たろう" />
-          <Input label="生年月日" type="date" value={birth} onChange={setBirth} />
-          <div style={{display: "flex", flexDirection: "column", gap: 4}}>
-            <label style={{fontSize:12, fontWeight:"bold", color:"#666"}}>性別</label>
-            <select value={gender} onChange={e => setGender(e.target.value)} style={inputStyle}>
-              <option value="未回答">未回答</option>
-              <option value="男">男</option>
-              <option value="女">女</option>
-              <option value="その他">その他</option>
-            </select>
-          </div>
-        </Section>
+        <div style={{background: "white", padding: 16, borderRadius: 12}}>
+          <h3 style={{marginTop: 0, marginBottom: 16, fontSize: 14, color: "#999"}}>基本情報</h3>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="名前" style={inputStyle} />
+          <input type="date" value={birth} onChange={e=>setBirth(e.target.value)} style={{...inputStyle, marginTop:12}} />
+          <select value={gender} onChange={e => setGender(e.target.value)} style={{...inputStyle, marginTop:12}}>
+             <option value="未回答">性別：未回答</option>
+             <option value="男">男</option>
+             <option value="女">女</option>
+          </select>
+        </div>
 
-        <Section title="医療情報">
-          <Input label="アレルギー" value={allergy} onChange={setAllergy} placeholder="例：卵, 乳製品" />
-          <Input label="既往歴・その他" value={history} onChange={setHistory} placeholder="例：熱性けいれんあり" textarea />
-        </Section>
+        <div style={{background: "white", padding: 16, borderRadius: 12}}>
+          <h3 style={{marginTop: 0, marginBottom: 16, fontSize: 14, color: "#999"}}>医療情報</h3>
+          <input value={allergy} onChange={e=>setAllergy(e.target.value)} placeholder="アレルギー" style={inputStyle} />
+          <textarea value={history} onChange={e=>setHistory(e.target.value)} placeholder="既往歴など" style={{...inputStyle, marginTop:12, height:80}} />
+        </div>
 
-        <button onClick={save} disabled={isSaving} style={{
-          padding: 16, borderRadius: 12, border: "none", background: "#FF6B35", color: "white", fontWeight: "bold", fontSize: 16, marginTop: 16
-        }}>
+        <button onClick={save} disabled={isSaving} style={{padding: 16, borderRadius: 12, border: "none", background: "#FF6B35", color: "white", fontWeight: "bold", fontSize: 16}}>
           保存する
         </button>
+
+        {targetUuid && (
+            <button onClick={doDelete} style={{padding: 16, borderRadius: 12, border: "none", background: "transparent", color: "#dc2626", fontSize: 14}}>
+                メンバーを削除
+            </button>
+        )}
       </main>
     </div>
   );
 }
-
-function Section({title, children}: any) {
-  return (
-    <div style={{background: "white", padding: 16, borderRadius: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.05)"}}>
-      <h3 style={{marginTop: 0, marginBottom: 16, fontSize: 14, color: "#999"}}>{title}</h3>
-      <div style={{display: "grid", gap: 16}}>{children}</div>
-    </div>
-  );
-}
-
-function Input({label, value, onChange, type="text", placeholder, textarea}: any) {
-  return (
-    <div style={{display: "flex", flexDirection: "column", gap: 4}}>
-      <label style={{fontSize:12, fontWeight:"bold", color:"#666"}}>{label}</label>
-      {textarea ? (
-        <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{...inputStyle, height: 80}} />
-      ) : (
-        <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />
-      )}
-    </div>
-  );
-}
-
-const inputStyle = {
-  padding: 12, borderRadius: 8, border: "1px solid #ddd", fontSize: 16, background: "#f9f9f9"
-};
+const inputStyle = { width: "100%", padding: 12, borderRadius: 8, border: "1px solid #ddd", fontSize: 16, background: "#f9f9f9", boxSizing: "border-box" } as const;
