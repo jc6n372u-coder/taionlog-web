@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
-import type { User, RecordRow, EventRow } from "../../utils/types";
+import type { User, RecordRow, EventRow, Medication } from "../../utils/types"; // ★Medicationを追加
 import TemperatureMedicationChart from "../../features/chart/TemperatureMedicationChart";
 import { RecordModal } from "../components/RecordModal"; // 編集用
 
@@ -20,6 +20,7 @@ export default function ChartPage() {
   const [selUser, setSelUser] = useState<string>("");
   const [records, setRecords] = useState<RecordRow[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
+  const [meds, setMeds] = useState<Medication[]>([]); // ★追加: お薬マスタ用
   
   // 編集用
   const [editTarget, setEditTarget] = useState<RecordRow | null>(null);
@@ -40,6 +41,7 @@ export default function ChartPage() {
     if (!selUser) return;
     setRecords(await LocalDb.listRecords(selUser));
     setEvents(await LocalDb.listEvents(selUser));
+    setMeds(await LocalDb.getMedications()); // ★追加: お薬マスタを読み込む
   }
 
   const chartData = useMemo(() => {
@@ -53,10 +55,20 @@ export default function ChartPage() {
 
     const medPoints = events
       .filter(e => e.event_type === "medication" && (now - new Date(e.occurred_at).getTime()) < windowMs)
-      .map(e => ({ time: new Date(e.occurred_at).getTime(), name: "薬" }));
+      .map(e => {
+        // ★修正: IDを使ってお薬マスタから名前を検索
+        // 新仕様(medication_uuid) と 旧仕様(payload) の両方をチェック
+        const found = meds.find(m => m.uuid === e.medication_uuid || m.uuid === e.payload);
+        const label = found ? found.name : "薬";
+        
+        return { 
+            time: new Date(e.occurred_at).getTime(), 
+            name: label 
+        };
+      });
 
     return { tempPoints, medPoints };
-  }, [records, events, range]);
+  }, [records, events, meds, range]); // ★medsを依存配列に追加
 
   // 現在表示中の月を取得（簡易）
   const currentMonthLabel = useMemo(() => {
