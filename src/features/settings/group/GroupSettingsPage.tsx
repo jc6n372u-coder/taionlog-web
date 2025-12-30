@@ -1,59 +1,71 @@
 ﻿import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../../data/local/localDb";
-import { createMember, deleteMember } from "../../../features/members/memberService";
 import type { User } from "../../../utils/types";
 
 export default function GroupSettingsPage() {
-  const [group, setGroup] = useState<{ group_id: string; group_name: string } | null>(null);
+  const nav = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
-  const [inviteCode, setInviteCode] = useState<string>(""); 
+  const [groupName, setGroupName] = useState("");
 
-  async function load() {
+  useEffect(() => {
+    reload();
+  }, []);
+
+  async function reload() {
     const g = await LocalDb.getCurrentGroup();
-    if (g) {
-      setGroup(g);
-      setUsers(await LocalDb.listUsers(g.group_id));
-      const code = await LocalDb.getMeta("cached_join_code");
-      setInviteCode(code ?? "（サーバー同期で取得）");
-    }
-  }
-
-  useEffect(() => { load(); }, []);
-
-  async function addMember() {
-    const name = prompt("メンバー名を入力してください");
-    if (!name) return;
-    await createMember(name);
-    await load();
-  }
-
-  async function doDeleteMember(u: User) {
-    if (!confirm(`${u.name} を削除しますか？`)) return;
-    await deleteMember(u.uuid);
-    await load();
+    if (!g) return;
+    setGroupName(g.group_name);
+    const us = await LocalDb.listUsers(g.group_id);
+    setUsers(us);
   }
 
   return (
-    <div style={{ padding: 10 }}>
-      <h3>グループ設定</h3>
-      {group && (
-        <div style={{ marginBottom: 20, padding: 12, border: "1px solid #ddd", borderRadius: 12, background: "white" }}>
-          <div>グループ名: <b>{group.group_name}</b></div>
-          <div style={{ marginTop: 8 }}>招待コード: <b>{inviteCode}</b></div>
-          <div style={{ fontSize: 12, color: "#666" }}>※招待コードの更新は現在管理者機能としてサーバー側でのみ可能です</div>
-        </div>
-      )}
+    <div style={{minHeight: "100dvh", background: "#f4f5f7"}}>
+      <header style={{height: 56, background: "#66A9D9", display: "flex", alignItems: "center", padding: "0 8px", color: "white"}}>
+        <button onClick={() => nav(-1)} style={{border:"none", background:"transparent", color:"white", fontSize:20, width:40}}>←</button>
+        <span style={{fontWeight: "bold", fontSize: 16}}>グループ設定</span>
+      </header>
 
-      <h4>メンバー管理</h4>
-      <div style={{ display: "grid", gap: 8 }}>
-        {users.map(u => (
-          <div key={u.uuid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 10, border: "1px solid #eee", borderRadius: 8, background: "white" }}>
-             <span>{u.name}</span>
-             <button onClick={() => doDeleteMember(u)} style={{ background: "#fee2e2", color: "#991b1b", border: "none", padding: "6px 12px", borderRadius: 6 }}>削除</button>
+      <main style={{padding: 16, display: "grid", gap: 16}}>
+        {/* グループ名 */}
+        <section style={{background: "white", padding: 16, borderRadius: 12}}>
+          <h3 style={{marginTop:0, fontSize:13, color:"#999"}}>グループ名</h3>
+          <div style={{fontSize: 16, fontWeight: "bold"}}>{groupName}</div>
+        </section>
+
+        {/* メンバーリスト */}
+        <section style={{background: "white", padding: 16, borderRadius: 12}}>
+          <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12}}>
+            <h3 style={{margin:0, fontSize:13, color:"#999"}}>メンバー</h3>
+            <button 
+              onClick={() => nav("/settings/member/edit")} 
+              style={{border:"none", background:"#E8F4FF", color:"#005a9e", padding:"6px 12px", borderRadius:20, fontSize:12, fontWeight:"bold", cursor:"pointer"}}
+            >
+              + メンバー追加
+            </button>
           </div>
-        ))}
-        <button onClick={addMember} style={{ padding: 12, borderRadius: 8, border: "1px dashed #aaa", background: "none" }}>＋ メンバーを追加</button>
-      </div>
+
+          <div style={{display: "grid", gap: 12}}>
+            {users.map(u => (
+              <div key={u.uuid} style={{display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom:"1px solid #f0f0f0", paddingBottom: 8}}>
+                <div>
+                  <div style={{fontWeight: "bold"}}>{u.name}</div>
+                  <div style={{fontSize: 12, color: "#666"}}>
+                    {u.birth_date ? new Date(u.birth_date).toLocaleDateString() : ""} {u.gender ? ` / ${u.gender}` : ""}
+                  </div>
+                </div>
+                <button 
+                  onClick={() => nav(`/settings/member/edit?id=${u.uuid}`)}
+                  style={{border:"1px solid #ddd", background:"white", padding:"6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer"}}
+                >
+                  編集
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      </main>
     </div>
   );
 }
