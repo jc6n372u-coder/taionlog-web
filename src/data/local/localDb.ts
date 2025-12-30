@@ -13,14 +13,31 @@ export async function setMeta(key: string, value: string) {
   await db.put("meta", { key, value });
 }
 
-export async function getCurrentGroup() {
-  const group_id = await getMeta("current_group_id");
-  const group_name = await getMeta("current_group_name");
-  return group_id ? { group_id, group_name: group_name ?? "家族" } : null;
+export async function getCurrentGroup(): Promise<any> {
+  const db = await getDb();
+  
+  const gid = await getMeta("active_group_id") || await getMeta("current_group_id");
+  if (!gid) return null;
+
+  // db.tsを更新したので "as any" なしでアクセス可能になりますが、
+  // 念のため安全策として残しておいても問題ありません
+  const g = await db.get("groups", gid);
+  
+  if (!g) {
+      const name = await getMeta("current_group_name");
+      return name ? { group_id: gid, group_name: name } : null;
+  }
+
+  return {
+    ...g,
+    group_id: g.uuid,
+    group_name: g.name,
+  };
 }
 
 export async function setCurrentGroup(group_id: string, group_name: string) {
   await setMeta("current_group_id", group_id);
+  await setMeta("active_group_id", group_id);
   await setMeta("current_group_name", group_name);
 }
 
@@ -62,11 +79,9 @@ export async function softDeleteUser(uuid: string) {
 }
 
 export async function deleteUser(uuid: string) {
-  // 物理削除ではなく論理削除に統一
   await softDeleteUser(uuid);
 }
 
-// ★追加：並び順の一括保存
 export async function updateUserOrder(items: { uuid: string; order_index: number }[]) {
   const db = await getDb();
   const tx = db.transaction("users", "readwrite");
@@ -103,7 +118,8 @@ export async function getMedications(group_id?: string): Promise<Medication[]> {
      if (!g) return [];
      group_id = g.group_id;
   }
-  return listMedications(group_id);
+  // ★修正: "!" をつけて「絶対に文字列が入ってるよ」とTSに教える
+  return listMedications(group_id!);
 }
 
 export async function upsertMedication(row: Medication) {
@@ -150,7 +166,7 @@ export async function getUpdatedRows<T extends { group_id: string; updated_at: s
   return (all as any[]).filter(x => x.group_id === group_id && x.updated_at > since);
 }
 
-export async function upsertAll(store: "users"|"records"|"medications"|"events"|"reminders", rows: any[]) {
+export async function upsertAll(store: "users"|"records"|"medications"|"events"|"reminders"|"groups", rows: any[]) {
   const db = await getDb();
   const tx = db.transaction(store as any, "readwrite");
   for (const r of rows) await tx.store.put(r);
@@ -191,7 +207,7 @@ export async function pruneLocalEventsIfNeeded(groupId: string, maxCount: number
 export const LocalDb = {
   getMeta, setMeta, getCurrentGroup, setCurrentGroup,
   getSettings, upsertSettings, ensureSettings,
-  listUsers, upsertUser, softDeleteUser, deleteUser, updateUserOrder, // ★ここに追加
+  listUsers, upsertUser, softDeleteUser, deleteUser, updateUserOrder,
   listRecords, upsertRecord,
   listMedications, getMedications, upsertMedication, deleteMedication,
   listEvents, upsertEvent,

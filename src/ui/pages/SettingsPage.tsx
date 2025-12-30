@@ -4,26 +4,13 @@ import { LocalDb } from "../../data/local/localDb";
 import { AdminToolsPanel } from "../components/AdminToolsPanel";
 import type { SettingsRow } from "../../utils/types";
 
-// ブラウザ通知の許可を求める関数
-async function requestNotification() {
-  if (!("Notification" in window)) {
-    alert("このブラウザは通知に対応していません");
-    return;
-  }
-  const p = await Notification.requestPermission();
-  alert(p === "granted" ? "通知が許可されました" : "通知が拒否されました");
-}
-
 export default function SettingsPage() {
   const nav = useNavigate();
   const [group, setGroup] = useState<{ group_name: string } | null>(null);
   const [settings, setSettings] = useState<SettingsRow | null>(null);
-  const [isPwa, setIsPwa] = useState(false);
 
   useEffect(() => {
     loadData();
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
-    setIsPwa(isStandalone);
   }, []);
 
   async function loadData() {
@@ -44,7 +31,6 @@ export default function SettingsPage() {
 
   return (
     <div style={styles.page}>
-      {/* 青いヘッダー */}
       <header style={styles.appBar}>
         <button onClick={() => nav(-1)} style={styles.iconBtn}>←</button>
         <span style={{fontWeight: "bold", fontSize: 16}}>設定</span>
@@ -52,16 +38,19 @@ export default function SettingsPage() {
       </header>
 
       <main style={styles.body}>
-        {/* 1. グループ情報 */}
+        {/* グループ設定へのリンク */}
         <section style={styles.card}>
           <h3 style={styles.h3}>グループ</h3>
-          <div style={styles.row}>
-            <span style={{color: "#666"}}>グループ名</span>
-            <span style={{fontWeight: "bold"}}>{group?.group_name ?? "..."}</span>
-          </div>
+          <button onClick={() => nav("/settings/group")} style={styles.menuItem}>
+            <div style={{display: "flex", flexDirection: "column", alignItems: "flex-start"}}>
+                <span style={{fontWeight: "bold"}}>{group?.group_name ?? "..."}</span>
+                <span style={{fontSize: 12, color: "#999"}}>メンバー編集・グループ名変更</span>
+            </div>
+            <span style={{color: "#ccc"}}>›</span>
+          </button>
         </section>
 
-        {/* 2. 参加コード */}
+        {/* 招待コード */}
         <section style={styles.card}>
           <h3 style={styles.h3}>参加コード</h3>
           <button onClick={() => nav("/invite")} style={styles.menuItem}>
@@ -70,7 +59,16 @@ export default function SettingsPage() {
           </button>
         </section>
 
-        {/* 3. プライバシー */}
+        {/* 投薬設定へのリンク (復活) */}
+        <section style={styles.card}>
+            <h3 style={styles.h3}>記録設定</h3>
+            <button onClick={() => nav("/settings/medication")} style={styles.menuItem}>
+                <span>投薬・薬の管理</span>
+                <span style={{color: "#ccc"}}>›</span>
+            </button>
+        </section>
+
+        {/* プライバシー */}
         <section style={styles.card}>
           <h3 style={styles.h3}>プライバシー</h3>
           <div style={styles.switchRow}>
@@ -98,29 +96,11 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        {/* 4. アプリ設定 */}
-        <section style={styles.card}>
-          <h3 style={styles.h3}>アプリ設定</h3>
-          <button onClick={requestNotification} style={styles.menuItem}>
-            <span>通知設定（許可をリクエスト）</span>
-            <span style={{color: "#ccc"}}>›</span>
-          </button>
-          {!isPwa && (
-            <div style={{padding: "12px 0", fontSize: 13, color: "#666", lineHeight: 1.5}}>
-              💡 <strong>ホーム画面に追加</strong>すると、アプリとして快適に使えます（ブラウザのメニューから追加してください）。
-            </div>
-          )}
-        </section>
-
-        {/* 5. 管理ツール */}
+        {/* 管理ツール */}
         <section style={styles.card}>
           <h3 style={styles.h3}>管理メニュー</h3>
           <AdminToolsPanel />
         </section>
-        
-        <div style={{marginTop: 32, textAlign: "center", fontSize: 12, color: "#999"}}>
-            バージョン: 2025.12.30
-        </div>
       </main>
     </div>
   );
@@ -130,17 +110,16 @@ const styles: Record<string, React.CSSProperties> = {
   page: { minHeight: "100dvh", background: "#f4f5f7", fontFamily: "sans-serif" },
   appBar: {
     height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 8px",
-    background: "#66A9D9", color: "white", position: "sticky", top: 0, zIndex: 10
+    background: "#66A9D9", color: "white"
   },
   iconBtn: { width: 40, height: 40, border: "none", background: "transparent", color: "white", fontSize: 20, cursor: "pointer" },
   body: { padding: 16, display: "flex", flexDirection: "column", gap: 16 },
   card: { background: "white", borderRadius: 12, padding: 16, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" },
   h3: { margin: "0 0 12px 0", fontSize: 13, color: "#888", fontWeight: "bold" },
-  row: { display: "flex", justifyContent: "space-between", fontSize: 15 },
   menuItem: { 
     width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", 
     background: "transparent", border: "none", padding: "12px 0", fontSize: 15, cursor: "pointer", 
-    borderBottom: "1px solid #f0f0f0" 
+    borderBottom: "1px solid #f0f0f0", textAlign: "left"
   },
   switchRow: { display: "flex", justifyContent: "space-between", alignItems: "center" },
   switch: { position: "relative", cursor: "pointer", width: 48, height: 26 },

@@ -3,6 +3,7 @@ import { AppShell } from './shell';
 import HomePage from '../ui/pages/HomePage';
 import ChartPage from '../ui/pages/ChartPage';
 import SettingsPage from '../ui/pages/SettingsPage';
+import InvitePage from '../ui/pages/InvitePage'; // ★新規作成します
 import GroupSettingsPage from '../features/settings/group/GroupSettingsPage';
 import MedicationSettingsPage from '../features/settings/medication/MedicationSettingsPage';
 import PersonalSettingsPage from '../features/settings/personal/PersonalSettingsPage';
@@ -11,23 +12,25 @@ import SecurityPolicyGate from '../ui/components/SecurityPolicyGate';
 import VersionUpdateNotice from '../ui/components/VersionUpdateNotice';
 
 export default function AppRouter() {
-  // Policy check is handled inside OnboardingPage and SecurityPolicyGate
   return (
     <BrowserRouter>
-      {/* グローバルモーダル */}
       <SecurityPolicyGate />
       <VersionUpdateNotice />
       
       <Routes>
-        {/* OnboardingはShellの外 */}
         <Route path="/onboarding" element={<OnboardingPage />} />
         
-        {/* メインアプリはShellの中 */}
+        {/* ★ここ修正: AppShellの外に出して、独自の青ヘッダーを使う */}
+        <Route path="/" element={<HomePage />} />
+        <Route path="/chart" element={<ChartPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/invite" element={<InvitePage />} />
+
+        {/* 詳細設定は既存のページを使うため AppShell の中でも外でも良いが、
+            今回は統一感のため AppShell (白ヘッダー) を使うか、
+            またはこれらも青ヘッダー化する必要がある。
+            一旦、機能維持のため既存のまま残す */}
         <Route element={<AppShell />}>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/chart" element={<ChartPage />} />
-          
-          <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/group" element={<GroupSettingsPage />} />
           <Route path="/settings/medication" element={<MedicationSettingsPage />} />
           <Route path="/settings/personal" element={<PersonalSettingsPage />} />
