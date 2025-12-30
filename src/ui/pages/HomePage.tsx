@@ -20,7 +20,13 @@ export default function HomePage() {
 
   const loadData = async () => {
     const group = await LocalDb.getCurrentGroup();
-    if (!group) return nav("/onboarding");
+    
+    // ★修正: ここでリダイレクトすると無限ループになるため、returnのみに変更
+    if (!group) {
+        console.warn("Group not found in HomePage");
+        return; 
+    }
+
     const us = await LocalDb.listUsers(group.group_id);
     if (us.length === 0) return;
     // @ts-ignore
