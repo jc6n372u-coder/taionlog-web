@@ -1,8 +1,8 @@
 ﻿import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppShell } from './shell';
-import HomePage from '../features/home/HomePage';
-import ChartPage from '../features/chart/ChartPage';
-import SettingsPage from '../features/settings/SettingsPage';
+import HomePage from '../ui/pages/HomePage';
+import ChartPage from '../ui/pages/ChartPage';
+import SettingsPage from '../ui/pages/SettingsPage';
 import GroupSettingsPage from '../features/settings/group/GroupSettingsPage';
 import MedicationSettingsPage from '../features/settings/medication/MedicationSettingsPage';
 import PersonalSettingsPage from '../features/settings/personal/PersonalSettingsPage';

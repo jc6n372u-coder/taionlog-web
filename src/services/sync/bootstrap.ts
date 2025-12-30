@@ -1,5 +1,5 @@
 ﻿import { LocalDb } from "../../data/local/localDb";
-import { syncNow } from "../syncService";
+import { syncNow } from "./syncService";
 import { ensureTier0Scheduler } from "../notifications/tier0";
 import { ensurePwa } from "../notifications/tier1_pwa";
 
