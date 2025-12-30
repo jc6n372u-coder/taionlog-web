@@ -8,10 +8,13 @@ export default function InvitePage() {
   const [expires, setExpires] = useState("");
 
   useEffect(() => {
-    // anyキャスト済みLocalDbを使うので安全
+    // データは届いているので、あとは表示するだけです
     LocalDb.getCurrentGroup().then(g => {
         if (g) {
-            setCode(g.join_code || "設定なし");
+            // join_code があれば表示、なければ "..." のまま
+            if (g.join_code) {
+                setCode(g.join_code);
+            }
             if (g.join_code_expires_at) {
                 setExpires(new Date(g.join_code_expires_at).toLocaleDateString());
             }
@@ -20,7 +23,7 @@ export default function InvitePage() {
   }, []);
 
   const copy = () => {
-      if(code && code !== "..." && code !== "設定なし") {
+      if(code && code !== "...") {
           navigator.clipboard.writeText(code);
           alert("コピーしました");
       }
@@ -40,6 +43,9 @@ export default function InvitePage() {
                 {code}
             </div>
             <div style={{fontSize: 12, color: "#999"}}>有効期限: {expires || "無期限"}</div>
+        </div>
+        <div style={{fontSize: 13, color: "#666", lineHeight: 1.6, textAlign: "center"}}>
+            このコードを家族の端末に入力すると、<br/>同じグループに参加してデータを共有できます。
         </div>
       </main>
     </div>

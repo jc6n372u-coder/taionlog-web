@@ -1,21 +1,14 @@
 ﻿import ReactDOM from "react-dom/client";
 import AppRouter from "./app/AppRouter";
 import { bootstrap } from "./services/sync/bootstrap";
-// import { registerPwa } from "./app/pwa"; // ★ここをコメントアウト（一時停止）
+import { registerPwa } from "./app/pwa";
 import { ErrorBoundary } from "./ui/components/ErrorBoundary";
 
-// ★追加：古いService Workerを強制削除するコード
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.getRegistrations().then((registrations) => {
-    for (const registration of registrations) {
-      registration.unregister(); // 強制削除
-    }
-  });
-}
-
+// 起動処理
 bootstrap();
-// registerPwa(); // ★ここもコメントアウト
+registerPwa();
 
+// StrictMode を外して、Chart.js の Canvas重複エラーを回避
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <ErrorBoundary>
     <AppRouter />
