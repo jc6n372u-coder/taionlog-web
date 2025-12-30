@@ -1,68 +1,35 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
+  color-scheme: light; /* ダークモードを無効化して白背景に固定 */
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+/* アプリ化のための必須リセット */
+html, body {
+  margin: 0;      /* ★重要：画面端の隙間をなくす */
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #f4f5f7; /* アプリ全体の背景色 */
+  overflow-x: hidden; /* 横スクロール防止 */
+  touch-action: manipulation; /* ダブルタップズームの無効化 */
+  user-select: none; /* スマホアプリっぽく、長押し選択を防ぐ（入力欄以外） */
+  -webkit-tap-highlight-color: transparent; /* タップ時の青い背景を消す */
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+/* 入力欄だけは文字選択できるようにする */
+input, textarea {
+  user-select: text;
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+#root {
+  width: 100%;
+  height: 100%;
+  isolation: isolate;
 }
