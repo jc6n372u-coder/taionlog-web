@@ -23,11 +23,12 @@ export default function TemperatureMedicationChart({ temperatures, medications }
         backgroundColor: "#4CAF50",
         tension: 0.3,
         pointRadius: 5,
-        pointHitRadius: 20, // ★ここ修正：タップ判定を広げる（指サイズ）
+        pointHitRadius: 20,
       },
       {
         label: "薬",
-        data: medications.map(m => ({ x: m.time, y: 39 })), // 上の方に表示
+        // ★修正1: ここで y: 39 だけでなく、medName: m.name を渡すように変更
+        data: medications.map(m => ({ x: m.time, y: 39, medName: m.name })),
         pointStyle: "rectRot",
         pointRadius: 6,
         backgroundColor: "#FFA726",
@@ -39,12 +40,13 @@ export default function TemperatureMedicationChart({ temperatures, medications }
 
   const options: any = {
     responsive: true,
+    maintainAspectRatio: false, // スマホで見やすくするためアスペクト比固定を解除推奨（お好みで）
     scales: {
       x: {
         type: "time",
         time: {
           unit: "day",
-          displayFormats: { day: "d" }, // ★ここ修正：日付のみ表示（14, 15...）
+          displayFormats: { day: "d" },
         },
         adapters: { date: { locale: ja } },
         grid: { color: "#f0f0f0" },
@@ -58,10 +60,21 @@ export default function TemperatureMedicationChart({ temperatures, medications }
     plugins: {
       legend: { display: false },
       tooltip: {
-         callbacks: {
+          callbacks: {
             title: (ctx: any) => {
                 const d = new Date(ctx[0].parsed.x);
                 return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`;
+            },
+            // ★修正2: ツールチップの中身（ラベル）をカスタマイズ
+            label: (context: any) => {
+                // "薬"のデータセットの場合
+                if (context.dataset.label === "薬") {
+                    // 修正1で埋め込んだ medName を取り出す
+                    const medName = context.raw.medName;
+                    return `💊 ${medName || "薬"}`;
+                }
+                // 体温の場合
+                return `${context.dataset.label}: ${context.parsed.y}℃`;
             }
          }
       }
