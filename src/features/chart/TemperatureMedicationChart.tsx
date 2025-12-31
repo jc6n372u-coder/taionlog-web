@@ -1,86 +1,150 @@
-﻿import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, TimeScale } from "chart.js";
-import { Line } from "react-chartjs-2";
-import "chartjs-adapter-date-fns";
-import { ja } from "date-fns/locale";
+﻿import { Chart } from 'react-chartjs-2';
+import 'chart.js/auto';
+import 'chartjs-adapter-date-fns';
+import type { ChartData, ChartOptions } from 'chart.js';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, TimeScale);
+type TempPoint = { time: number; value: number };
+type MedPoint = { time: number; name: string };
+
+export type ViewMode = 'day' | 'week' | 'month' | 'year';
 
 type Props = {
-  temperatures: { time: number; value: number }[];
-  medications: { time: number; name: string }[];
+  temperatures: TempPoint[];
+  medications: MedPoint[];
+  viewMode: ViewMode;
 };
 
-export default function TemperatureMedicationChart({ temperatures, medications }: Props) {
-  // 時系列ソート
-  const sortedTemps = [...temperatures].sort((a, b) => a.time - b.time);
+const COLORS = {
+  BLUE: '#66A9D9',
+  FEVER: '#FF5722',
+  MEDICATION: '#F59E0B'
+};
 
-  const data = {
+const FEVER_LINE = 37.5;
+
+export default function TemperatureMedicationChart({ temperatures, medications, viewMode }: Props) {
+  
+  let timeUnit: 'hour' | 'day' | 'month' = 'day';
+  let displayFmt = 'd';
+
+  if (viewMode === 'day') {
+      timeUnit = 'hour';
+      displayFmt = 'H:mm';
+  } else if (viewMode === 'year') {
+      timeUnit = 'month';
+      displayFmt = 'M月';
+  } else {
+      timeUnit = 'day';
+      displayFmt = 'd';
+  }
+
+  const data: ChartData<'line' | 'scatter'> = {
     datasets: [
       {
-        label: "体温",
-        data: sortedTemps.map(t => ({ x: t.time, y: t.value })),
-        borderColor: "#4CAF50",
-        backgroundColor: "#4CAF50",
+        type: 'line' as const,
+        label: '体温',
+        data: temperatures.map(t => ({
+          x: t.time,
+          y: t.value,
+        })),
+        borderColor: COLORS.BLUE,
+        backgroundColor: COLORS.BLUE,
+        pointBackgroundColor: temperatures.map(t =>
+          t.value >= FEVER_LINE ? COLORS.FEVER : COLORS.BLUE
+        ),
+        pointRadius: 4,
+        pointHoverRadius: 6,
         tension: 0.3,
-        pointRadius: 5,
-        pointHitRadius: 20,
       },
       {
-        label: "薬",
-        // ★修正1: ここで y: 39 だけでなく、medName: m.name を渡すように変更
-        data: medications.map(m => ({ x: m.time, y: 39, medName: m.name })),
-        pointStyle: "rectRot",
+        type: 'line' as const,
+        label: '高熱ライン',
+        data: temperatures.map(t => ({ x: t.time, y: FEVER_LINE })),
+        borderColor: '#f87171',
+        borderWidth: 1,
+        borderDash: [5, 5],
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        pointHitRadius: 0, 
+      },
+      {
+        type: 'scatter' as const,
+        label: '投薬',
+        data: medications.map(m => ({
+          x: m.time,
+          y: 39.0,
+          medName: m.name
+        })),
+        backgroundColor: COLORS.MEDICATION,
+        pointStyle: 'rectRot',
         pointRadius: 6,
-        backgroundColor: "#FFA726",
-        borderColor: "#FFA726",
-        showLine: false, 
+        pointHoverRadius: 9,
       }
     ],
   };
 
-  const options: any = {
+  const options: ChartOptions<'line' | 'scatter'> = {
     responsive: true,
-    maintainAspectRatio: false, // スマホで見やすくするためアスペクト比固定を解除推奨（お好みで）
-    scales: {
-      x: {
-        type: "time",
-        time: {
-          unit: "day",
-          displayFormats: { day: "d" },
-        },
-        adapters: { date: { locale: ja } },
-        grid: { color: "#f0f0f0" },
-      },
-      y: {
-        min: 35,
-        max: 40,
-        grid: { color: "#f0f0f0" },
-      },
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'nearest',
+      axis: 'x',
+      intersect: false,
     },
     plugins: {
       legend: { display: false },
       tooltip: {
-          callbacks: {
-            title: (ctx: any) => {
-                const d = new Date(ctx[0].parsed.x);
-                return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`;
-            },
-            // ★修正2: ツールチップの中身（ラベル）をカスタマイズ
-            label: (context: any) => {
-                // "薬"のデータセットの場合
-                if (context.dataset.label === "薬") {
-                    // 修正1で埋め込んだ medName を取り出す
-                    const medName = context.raw.medName;
-                    // ★修正: 絵文字(💊)を削除し、名前だけを返す
-                    return `${medName || "薬"}`;
-                }
-                // 体温の場合
-                return `${context.dataset.label}: ${context.parsed.y}℃`;
+        // ★修正1: カラーボックスを描画しない（エラー回避＆見た目改善）
+        displayColors: false, 
+        
+        filter: (item) => item.dataset.label !== '高熱ライン',
+        callbacks: {
+          label: (context: any) => {
+            if (context.dataset.type === 'scatter') {
+              return `💊 ${context.raw.medName}`;
             }
-         }
+            return `${context.parsed.y.toFixed(1)}℃`;
+          },
+          title: (context: any) => {
+             // ★修正2: データが存在しない場合にクラッシュしないようガードを入れる
+             if (!context || !context.length || !context[0].parsed) {
+                 return '';
+             }
+             const date = new Date(context[0].parsed.x);
+             if (viewMode === 'day') return `${date.getHours()}:${date.getMinutes().toString().padStart(2,'0')}`;
+             return `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${date.getMinutes().toString().padStart(2,'0')}`;
+          }
+        }
       }
+    },
+    scales: {
+      x: {
+        type: 'time',
+        time: { 
+          unit: timeUnit,
+          displayFormats: { 
+            hour: 'H:mm', 
+            day: 'd',
+            month: 'M月' 
+          } 
+        },
+        grid: { display: false },
+        ticks: {
+           maxRotation: 0,
+           autoSkip: true,
+        }
+      },
+      y: {
+        suggestedMin: 36.0,
+        suggestedMax: 40.0,
+        ticks: { stepSize: 0.5 },
+      },
     },
   };
 
-  return <Line data={data} options={options} />;
+  return (
+    <div style={{ height: '300px', width: '100%' }}>
+      <Chart type="line" data={data} options={options} />
+    </div>
+  );
 }
