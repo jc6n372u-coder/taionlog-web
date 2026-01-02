@@ -17,7 +17,9 @@ type Props = {
 const COLORS = {
   BLUE: '#66A9D9',
   FEVER: '#FF5722',
-  MEDICATION: '#F59E0B'
+  MEDICATION: '#F59E0B',
+  // ★追加: 折れ線を目立たなくするためのグレー
+  LINE_GRAY: '#CBD5E1', 
 };
 
 const FEVER_LINE = 37.5;
@@ -47,13 +49,17 @@ export default function TemperatureMedicationChart({ temperatures, medications, 
           x: t.time,
           y: t.value,
         })),
-        borderColor: COLORS.BLUE,
+        // ★変更: 線をグレーにして、太さを少し控えめに
+        borderColor: COLORS.LINE_GRAY,
+        borderWidth: 2,
+        
+        // ★変更: 点を目立たせる（色は維持）
         backgroundColor: COLORS.BLUE,
         pointBackgroundColor: temperatures.map(t =>
           t.value >= FEVER_LINE ? COLORS.FEVER : COLORS.BLUE
         ),
-        pointRadius: 4,
-        pointHoverRadius: 6,
+        pointRadius: 5,      // ★4 -> 5 に少し拡大
+        pointHoverRadius: 7, // ★6 -> 7 に少し拡大
         tension: 0.3,
       },
       {
@@ -77,8 +83,8 @@ export default function TemperatureMedicationChart({ temperatures, medications, 
         })),
         backgroundColor: COLORS.MEDICATION,
         pointStyle: 'rectRot',
-        pointRadius: 6,
-        pointHoverRadius: 9,
+        pointRadius: 7, // ★6 -> 7 に少し拡大
+        pointHoverRadius: 10,
       }
     ],
   };
@@ -87,16 +93,15 @@ export default function TemperatureMedicationChart({ temperatures, medications, 
     responsive: true,
     maintainAspectRatio: false,
     interaction: {
+      // ★変更: X軸固定をやめて、カーソルから最短距離の点を拾う設定に変更
       mode: 'nearest',
-      axis: 'x',
+      axis: 'xy', // XとY両方の距離を見る
       intersect: false,
     },
     plugins: {
       legend: { display: false },
       tooltip: {
-        // ★修正1: カラーボックスを描画しない（エラー回避＆見た目改善）
-        displayColors: false, 
-        
+        displayColors: false,
         filter: (item) => item.dataset.label !== '高熱ライン',
         callbacks: {
           label: (context: any) => {
@@ -106,8 +111,8 @@ export default function TemperatureMedicationChart({ temperatures, medications, 
             return `${context.parsed.y.toFixed(1)}℃`;
           },
           title: (context: any) => {
-             // ★修正2: データが存在しない場合にクラッシュしないようガードを入れる
-             if (!context || !context.length || !context[0].parsed) {
+             // データが存在しない場合にクラッシュしないようガード
+             if (!context || !context.length || !context[0]?.parsed) {
                  return '';
              }
              const date = new Date(context[0].parsed.x);
