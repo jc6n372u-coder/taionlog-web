@@ -80,42 +80,29 @@ export default function MedicationBookPage() {
 
         <div style={{ display: "grid", gap: 12 }}>
           {filteredMeds.map(m => {
-            // 所有者名の取得
             const owner = users.find(u => u.uuid === m.target_user_id);
             
-            // ★修正ポイント: 型定義(Array)と実データ(String)の矛盾を回避するため any でキャストして処理
+            // タグの安全なパース処理
             let displayTags: string[] = [];
             try {
-                // ここで一旦 any にしてTypeScriptの型チェックを回避
                 const rawTags = m.ai_tags as any;
-
                 if (Array.isArray(rawTags)) {
-                    // すでに配列ならそのまま使う
                     displayTags = rawTags;
                 } else if (typeof rawTags === "string") {
                     const trimmed = rawTags.trim();
                     if (trimmed) {
                         if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-                            // JSON形式っぽいならパースを試みる
                             try {
                                 const parsed = JSON.parse(trimmed);
-                                if (Array.isArray(parsed)) {
-                                    displayTags = parsed;
-                                } else {
-                                    displayTags = [trimmed];
-                                }
-                            } catch {
-                                // パース失敗したらそのまま表示
-                                displayTags = [trimmed];
-                            }
+                                if (Array.isArray(parsed)) displayTags = parsed;
+                                else displayTags = [trimmed];
+                            } catch { displayTags = [trimmed]; }
                         } else {
-                            // ただの文字列（例: "けいれん止め"）なら、それを1つのタグとして扱う
                             displayTags = [trimmed];
                         }
                     }
                 }
             } catch (e) {
-                console.error("Tag parsing error", e);
                 displayTags = [];
             }
 
@@ -133,7 +120,6 @@ export default function MedicationBookPage() {
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div style={{ fontWeight: "bold", fontSize: 16, color: "#333" }}>{m.name}</div>
-                  {/* 所有者バッジ */}
                   {owner && (
                     <div style={{ fontSize: 11, background: "#e0f2fe", color: "#0369a1", padding: "2px 8px", borderRadius: 10 }}>
                       {owner.name}
@@ -141,7 +127,6 @@ export default function MedicationBookPage() {
                   )}
                 </div>
 
-                {/* AIタグ表示エリア */}
                 {displayTags.length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
                     {displayTags.map((tag, i) => (
@@ -152,9 +137,9 @@ export default function MedicationBookPage() {
                   </div>
                 )}
                 
-                {/* 解説があれば少し表示 */}
+                {/* 解説：改行を許可し、全体を表示するように修正 */}
                 {m.ai_description && (
-                  <div style={{ fontSize: 12, color: "#666", marginTop: 8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div style={{ fontSize: 12, color: "#666", marginTop: 8, whiteSpace: "pre-wrap", lineHeight: "1.5" }}>
                     {m.ai_description}
                   </div>
                 )}
@@ -164,7 +149,6 @@ export default function MedicationBookPage() {
         </div>
       </main>
 
-      {/* 新規登録ボタン */}
       <button 
         onClick={() => nav("/medication-book/new")}
         style={{ 

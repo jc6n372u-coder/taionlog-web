@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import { ApiClient } from "../../data/remote/apiClient";
@@ -34,7 +34,31 @@ export default function MedicationEditPage() {
       if (id) {
         const target = meds.find(m => m.uuid === id);
         if (target) {
-          setFormData(JSON.parse(JSON.stringify(target))); // Deep Copy
+          // Deep Copy
+          const loadedData = JSON.parse(JSON.stringify(target));
+
+          // ★修正: ai_tags が文字列として保存されている場合の救済措置
+          try {
+              const rawTags = loadedData.ai_tags as any;
+              if (typeof rawTags === "string") {
+                  const trimmed = rawTags.trim();
+                  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                      // JSON配列文字列ならパース
+                      loadedData.ai_tags = JSON.parse(trimmed);
+                  } else {
+                      // ただの文字列なら1要素の配列にする
+                      loadedData.ai_tags = trimmed ? [trimmed] : [];
+                  }
+              } else if (!Array.isArray(rawTags)) {
+                  // 配列でも文字列でもなければ空配列
+                  loadedData.ai_tags = [];
+              }
+          } catch (e) {
+              console.error("Tag parse error on load", e);
+              loadedData.ai_tags = [];
+          }
+
+          setFormData(loadedData);
           setIsOpenDetails(true); // 編集時は詳細を開いておく
         }
       }
@@ -88,7 +112,7 @@ export default function MedicationEditPage() {
       name: formData.name!,
       target_user_id: formData.target_user_id,
       
-      // AIデータ
+      // AIデータ (ここは常に配列として保存される)
       ai_tags: formData.ai_tags,
       ai_description: formData.ai_description,
       ai_side_effects: formData.ai_side_effects,
@@ -210,7 +234,8 @@ export default function MedicationEditPage() {
 
               <label style={styles.label}>用途タグ</label>
               <input 
-                value={formData.ai_tags?.join(", ") || ""}
+                // ★修正: ここで undefined チェックと配列チェックを行う
+                value={Array.isArray(formData.ai_tags) ? formData.ai_tags.join(", ") : ""}
                 onChange={e => setFormData({...formData, ai_tags: e.target.value.split(",").map(t=>t.trim())})}
                 style={styles.input}
                 placeholder="カンマ区切り (例: 発熱, 咳)"
