@@ -47,25 +47,33 @@ export default function SettingsPage() {
           <h3 style={styles.h3}>グループ設定 (共有)</h3>
           <button onClick={() => nav("/settings/group")} style={styles.menuItem}>
             <div>
-                <span style={{fontWeight: "bold"}}>{group?.group_name ?? "..."}</span>
-                <div style={{fontSize: 11, color: "#999"}}>メンバー追加・編集・並び替え</div>
+              <span style={{fontWeight: "bold"}}>{group?.group_name ?? "..."}</span>
+              <div style={{fontSize: 11, color: "#999"}}>メンバー追加・編集・並び替え</div>
             </div>
             <span style={{color: "#ccc"}}>›</span>
           </button>
           
           <button onClick={() => nav("/settings/medications")} style={styles.menuItem}>
             <div>
-                <span style={{fontWeight: "bold"}}>お薬の管理</span>
-                <div style={{fontSize: 11, color: "#999"}}>よく使う薬の登録・削除</div>
+              <span style={{fontWeight: "bold"}}>お薬の管理</span>
+              <div style={{fontSize: 11, color: "#999"}}>よく使う薬の登録・削除</div>
             </div>
             <span style={{color: "#ccc"}}>›</span>
           </button>
 
-          {/* ★追加: 症状管理メニュー */}
           <button onClick={() => nav("/settings/symptoms")} style={styles.menuItem}>
             <div>
-                <span style={{fontWeight: "bold"}}>症状タグの管理</span>
-                <div style={{fontSize: 11, color: "#999"}}>記録時の症状ボタンを編集</div>
+              <span style={{fontWeight: "bold"}}>症状タグの管理</span>
+              <div style={{fontSize: 11, color: "#999"}}>記録時の症状ボタンを編集</div>
+            </div>
+            <span style={{color: "#ccc"}}>›</span>
+          </button>
+
+          {/* ★追加: AI設定 */}
+          <button onClick={() => nav("/settings/ai")} style={styles.menuItem}>
+            <div>
+              <span style={{fontWeight: "bold"}}>AI機能の設定</span>
+              <div style={{fontSize: 11, color: "#999"}}>APIキー・モデルの変更</div>
             </div>
             <span style={{color: "#ccc"}}>›</span>
           </button>

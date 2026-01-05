@@ -1,5 +1,5 @@
 ﻿import { getDb } from "./db";
-import type { User, RecordRow, Medication, EventRow, Reminder, SettingsRow } from "../../utils/types";
+import type { User, RecordRow, Medication, EventRow, Reminder, SettingsRow, AiSettings } from "../../utils/types";
 
 const nowISO = () => new Date().toISOString();
 
@@ -13,14 +13,28 @@ export async function setMeta(key: string, value: string) {
   await db.put("meta", { key, value });
 }
 
+// ★追加: AI設定の取得
+export async function getAiSettings(): Promise<AiSettings | null> {
+  const val = await getMeta("ai_settings");
+  if (!val) return null;
+  try {
+    return JSON.parse(val);
+  } catch {
+    return null;
+  }
+}
+
+// ★追加: AI設定の保存
+export async function saveAiSettings(settings: AiSettings) {
+  await setMeta("ai_settings", JSON.stringify(settings));
+}
+
 export async function getCurrentGroup(): Promise<any> {
   const db = await getDb();
   
   const gid = await getMeta("active_group_id") || await getMeta("current_group_id");
   if (!gid) return null;
 
-  // db.tsを更新したので "as any" なしでアクセス可能になりますが、
-  // 念のため安全策として残しておいても問題ありません
   const g = await db.get("groups", gid);
   
   if (!g) {
@@ -118,7 +132,6 @@ export async function getMedications(group_id?: string): Promise<Medication[]> {
      if (!g) return [];
      group_id = g.group_id;
   }
-  // ★修正: "!" をつけて「絶対に文字列が入ってるよ」とTSに教える
   return listMedications(group_id!);
 }
 
@@ -207,6 +220,9 @@ export async function pruneLocalEventsIfNeeded(groupId: string, maxCount: number
 export const LocalDb = {
   getMeta, setMeta, getCurrentGroup, setCurrentGroup,
   getSettings, upsertSettings, ensureSettings,
+  // ★追加
+  getAiSettings, saveAiSettings,
+
   listUsers, upsertUser, softDeleteUser, deleteUser, updateUserOrder,
   listRecords, upsertRecord,
   listMedications, getMedications, upsertMedication, deleteMedication,

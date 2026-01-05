@@ -1,21 +1,26 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
-import { useSync } from "../../services/sync/syncService";
+import { useSync } from "../../services/sync/syncService"; 
 import type { User, RecordRow } from "../../utils/types";
 
-// 相対日付フォーマッター
+// 日付フォーマッター（MM/DD(曜日)）
+function formatDate(iso: string) {
+  const d = new Date(iso);
+  const week = ["日","月","火","水","木","金","土"];
+  return `${d.getMonth()+1}/${d.getDate()}(${week[d.getDay()]})`;
+}
+
+// 相対日付フォーマッター（今日、昨日、N日前）
 function formatRelativeDate(iso: string) {
   const d = new Date(iso);
   const now = new Date();
   const diff = now.getTime() - d.getTime();
   const dayDiff = Math.floor(diff / (1000 * 60 * 60 * 24));
-  const week = ["日","月","火","水","木","金","土"];
-  const dateStr = `${d.getMonth()+1}/${d.getDate()}(${week[d.getDay()]})`;
 
-  if (dayDiff === 0) return `${dateStr} 今日`;
-  if (dayDiff === 1) return `${dateStr} 昨日`;
-  return `${dateStr} ${dayDiff}日前`;
+  if (dayDiff === 0) return "今日";
+  if (dayDiff === 1) return "昨日";
+  return `${dayDiff}日前`;
 }
 
 export default function HomePage() {
@@ -24,10 +29,8 @@ export default function HomePage() {
 
   const [users, setUsers] = useState<User[]>([]);
   const [records, setRecords] = useState<RecordRow[]>([]);
-  const [settings, setSettings] = useState<any>(null); // 設定読み込み用
-
-  // ユーザー選択メニューの開閉状態
-  const [showUserSelect, setShowUserSelect] = useState(false);
+  const [settings, setSettings] = useState<any>(null);
+  const [isAiReady, setIsAiReady] = useState(false);
 
   // データ読み込み
   const loadData = async () => {
@@ -46,12 +49,19 @@ export default function HomePage() {
     for (const u of us) {
       const recs = await LocalDb.listRecords(u.uuid);
       if (recs.length > 0) {
-        // 新しい順にソートして先頭を取得
         recs.sort((a,b) => new Date(b.measured_at).getTime() - new Date(a.measured_at).getTime());
         allRecs.push(recs[0]);
       }
     }
     setRecords(allRecs);
+
+    // AI設定チェック
+    const aiSettings = await LocalDb.getAiSettings();
+    if (aiSettings && (aiSettings.geminiApiKey || aiSettings.groqApiKey)) {
+      setIsAiReady(true);
+    } else {
+      setIsAiReady(false);
+    }
   };
 
   useEffect(() => {
@@ -64,22 +74,30 @@ export default function HomePage() {
     await loadData();
   };
 
-  // ★重要: メンバーを選んで「新しい入力画面」へ遷移する処理
+  // 記録開始（行タップ時）
   const startRecord = (userId: string) => {
-    setShowUserSelect(false);
-    nav(`/input?userId=${userId}`); // URLパラメータでIDを渡す
+    nav(`/input?userId=${userId}`);
+  };
+
+  const handleSupportClick = () => {
+    if (isAiReady) {
+      nav("/ai-support");
+    } else {
+      if (confirm("AIサポート機能を使うにはAPIキーの設定が必要です。\n設定画面に移動しますか？")) {
+        nav("/settings/ai");
+      }
+    }
   };
 
   return (
     <div style={styles.page}>
-      {/* ヘッダー */}
       <header style={styles.appBar}>
         <div style={styles.appBarLeft}>
             <span style={{fontWeight:"bold", fontSize: 18}}>たいおんログ</span>
         </div>
         <div style={styles.appBarRight}>
           <button onClick={doSync} disabled={syncState.isLoading} style={styles.iconBtn}>
-             {syncState.isLoading ? "..." : "同期"}
+              {syncState.isLoading ? "..." : "同期"}
           </button>
           <button onClick={() => nav("/settings")} style={styles.iconBtn}>設定</button>
         </div>
@@ -102,16 +120,13 @@ export default function HomePage() {
                 const rec = records.find(r => r.user_uuid === u.uuid);
                 const showTemp = settings?.show_temp_on_home ?? true;
                 
-                // ★修正: 37.5度以上チェックの色を変更
-const isFever = rec && rec.temp >= 37.5;
-const tempColor = isFever ? "#FF5722" : "#66A9D9"; // Deep Orange or Blue
+                const isFever = rec && rec.temp >= 37.5;
+                const tempColor = isFever ? "#FF5722" : "#66A9D9";
 
-                // 表示文字列
                 let tempStr = "—";
                 if (rec) {
                     if (rec.temp === 0) {
-                         // temp=0 は「投薬のみ」の記録として扱う場合
-                         tempStr = "投薬のみ"; 
+                         tempStr = "投薬"; 
                     } else if (showTemp) {
                          tempStr = `${rec.temp.toFixed(1)}℃`;
                     } else {
@@ -121,12 +136,22 @@ const tempColor = isFever ? "#FF5722" : "#66A9D9"; // Deep Orange or Blue
 
                 return (
                     <div key={u.uuid} style={styles.row} onClick={() => startRecord(u.uuid)}>
+                        {/* 1. 名前エリア */}
                         <div style={styles.userName}>{u.name}</div>
-                        <div style={{...styles.temp, color: tempColor, fontSize: rec && rec.temp === 0 ? 14 : 18}}>
+                        
+                        {/* 2. 体温エリア (幅100pxに拡張して余白を作る) */}
+                        <div style={{...styles.tempCol, color: tempColor, fontSize: rec && rec.temp === 0 ? 14 : 18}}>
                             {tempStr}
                         </div>
-                        <div style={styles.date}>
-                            {rec ? formatRelativeDate(rec.measured_at) : "未記録"}
+
+                        {/* 3. 日付エリア */}
+                        <div style={styles.dateCol}>
+                            {rec ? formatDate(rec.measured_at) : "未記録"}
+                        </div>
+
+                        {/* 4. 相対日付エリア */}
+                        <div style={styles.relativeDateCol}>
+                            {rec ? formatRelativeDate(rec.measured_at) : ""}
                         </div>
                     </div>
                 );
@@ -134,34 +159,21 @@ const tempColor = isFever ? "#FF5722" : "#66A9D9"; // Deep Orange or Blue
         </div>
       </main>
 
-      {/* ＋ボタン (FAB) - クリックで選択メニューを開く */}
       <button 
-        onClick={() => setShowUserSelect(true)} 
-        style={styles.fab}
+        onClick={handleSupportClick} 
+        style={{ 
+          ...styles.fab,
+          background: isAiReady ? "#111827" : "#9ca3af",
+          width: "auto",
+          padding: "0 24px",
+          borderRadius: 30,
+          fontSize: 16,
+          transition: "background 0.3s"
+        }}
       >
-        ＋
+        {isAiReady ? "🤖 サポート" : "⚙️ 設定が必要"}
       </button>
 
-      {/* ユーザー選択メニュー (ActionSheet風) */}
-      {showUserSelect && (
-        <div style={styles.menuOverlay} onClick={() => setShowUserSelect(false)}>
-          <div style={styles.menuSheet} onClick={e => e.stopPropagation()}>
-            <div style={styles.menuTitle}>誰の記録をつけますか？</div>
-            {users.map(u => (
-                <button 
-                  key={u.uuid} 
-                  onClick={() => startRecord(u.uuid)}
-                  style={styles.menuItem}
-                >
-                  {u.name}
-                </button>
-            ))}
-            <button onClick={() => setShowUserSelect(false)} style={styles.menuCancel}>
-              キャンセル
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -176,16 +188,14 @@ const styles: Record<string, React.CSSProperties> = {
   card: { background: "white", borderRadius: 12, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.1)" },
   cardHeader: { display: "flex", justifyContent: "space-between", marginBottom: 12, fontSize: 14, color: "#666" },
   linkBtn: { background: "transparent", border: "none", color: "#66A9D9", cursor: "pointer" },
-  row: { display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #eee", cursor: "pointer" },
-  userName: { flex: 1, fontWeight: "bold", color: "#333" },
-  temp: { fontSize: 18, fontWeight: "bold", marginRight: 12 },
-  date: { fontSize: 12, color: "#999" },
-  fab: { position: "fixed", bottom: 24, right: 24, background: "#FF6B35", color: "white", border: "none", borderRadius: 28, width: 56, height: 56, fontSize: 28, fontWeight: "bold", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", paddingBottom: 4 },
   
-  // メニュー用スタイル
-  menuOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "flex-end" },
-  menuSheet: { width: "100%", background: "white", borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: "20px 16px", display: "flex", flexDirection: "column", gap: 12, animation: "slideUp 0.2s ease-out" },
-  menuTitle: { textAlign: "center", fontWeight: "bold", color: "#666", marginBottom: 8 },
-  menuItem: { padding: 16, background: "#f4f5f7", border: "none", borderRadius: 12, fontSize: 16, fontWeight: "bold", color: "#333", cursor: "pointer" },
-  menuCancel: { padding: 16, background: "white", border: "1px solid #ddd", borderRadius: 12, fontSize: 16, color: "#666", cursor: "pointer" }
+  row: { display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #eee", cursor: "pointer" },
+  userName: { flex: 1, fontWeight: "bold", color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 8 },
+  
+  // ★幅を調整してバランス改善
+  tempCol: { width: 100, fontWeight: "bold", textAlign: "left", flexShrink: 0 }, // 64 -> 100
+  dateCol: { width: 90, fontSize: 13, color: "#666", textAlign: "left", flexShrink: 0 }, // 80 -> 90
+  relativeDateCol: { fontSize: 12, color: "#999", textAlign: "right", marginLeft: "auto", minWidth: 45, flexShrink: 0 },
+
+  fab: { position: "fixed", bottom: 24, right: 24, color: "white", border: "none", height: 56, fontWeight: "bold", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" },
 };
