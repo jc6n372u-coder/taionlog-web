@@ -6,7 +6,7 @@ import ChartPage from '../ui/pages/ChartPage';
 import SettingsPage from '../ui/pages/SettingsPage';
 import InvitePage from '../ui/pages/InvitePage';
 import MemberEditPage from '../ui/pages/MemberEditPage';
-import { InputPage } from '../ui/pages/InputPage';
+import InputPage from '../ui/pages/InputPage'; // ★修正: { } を外しました
 import OnboardingPage from '../ui/pages/OnboardingPage';
 
 import GroupSettingsPage from '../features/settings/group/GroupSettingsPage';
