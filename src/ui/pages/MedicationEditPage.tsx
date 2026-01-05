@@ -4,16 +4,47 @@ import { LocalDb } from "../../data/local/localDb";
 import { ApiClient } from "../../data/remote/apiClient";
 import type { User, Medication } from "../../utils/types";
 
+// 飲み合わせデータなどの独自形式 {key=value, ...} をパースするヘルパー
+function parseCustomFormat(input: any): any {
+  if (!input) return null;
+  if (typeof input === "object") return input; 
+
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    try { return JSON.parse(trimmed); } catch {}
+
+    // 独自形式 {message=..., status=...} の救済
+    if (trimmed.startsWith("{") && trimmed.includes("message=")) {
+      let status = "none";
+      let message = trimmed;
+
+      if (trimmed.includes("status=danger")) status = "danger";
+      else if (trimmed.includes("status=warning")) status = "warning";
+      else if (trimmed.includes("status=safe")) status = "safe";
+      
+      const msgStart = trimmed.indexOf("message=");
+      if (msgStart !== -1) {
+        let cleanMsg = trimmed.slice(msgStart + 8);
+        if (cleanMsg.endsWith("}")) cleanMsg = cleanMsg.slice(0, -1);
+        const statusIdx = cleanMsg.lastIndexOf(", status=");
+        if (statusIdx !== -1) cleanMsg = cleanMsg.substring(0, statusIdx);
+        message = cleanMsg.trim();
+      }
+      return { status, message };
+    }
+  }
+  return null;
+}
+
 export default function MedicationEditPage() {
   const nav = useNavigate();
-  const { id } = useParams(); // URLからID取得 (新規なら undefined)
+  const { id } = useParams(); 
   
   const [users, setUsers] = useState<User[]>([]);
   const [allMeds, setAllMeds] = useState<Medication[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [isOpenDetails, setIsOpenDetails] = useState(false); // アコーディオン開閉
+  const [isOpenDetails, setIsOpenDetails] = useState(false);
 
-  // フォーム状態
   const [formData, setFormData] = useState<Partial<Medication>>({
     name: "",
     schedule: { wakeup:0, morning:0, lunch:0, evening:0, bedtime:0 },
@@ -30,48 +61,52 @@ export default function MedicationEditPage() {
       const meds = await LocalDb.getMedications(g.group_id);
       setAllMeds(meds);
 
-      // 編集モードの場合、データをロード
       if (id) {
         const target = meds.find(m => m.uuid === id);
         if (target) {
-          // Deep Copy
           const loadedData = JSON.parse(JSON.stringify(target));
 
-          // ★修正: ai_tags が文字列として保存されている場合の救済措置
+          // 1. タグのパース
           try {
               const rawTags = loadedData.ai_tags as any;
               if (typeof rawTags === "string") {
                   const trimmed = rawTags.trim();
                   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-                      // JSON配列文字列ならパース
                       loadedData.ai_tags = JSON.parse(trimmed);
                   } else {
-                      // ただの文字列なら1要素の配列にする
                       loadedData.ai_tags = trimmed ? [trimmed] : [];
                   }
               } else if (!Array.isArray(rawTags)) {
-                  // 配列でも文字列でもなければ空配列
                   loadedData.ai_tags = [];
               }
-          } catch (e) {
-              console.error("Tag parse error on load", e);
-              loadedData.ai_tags = [];
+          } catch { loadedData.ai_tags = []; }
+
+          // 2. 飲み合わせデータのパース
+          loadedData.ai_interaction = parseCustomFormat(loadedData.ai_interaction);
+
+          // 3. ★追加: スケジュールのパース（ここが文字列だと回数が0になってしまう）
+          if (loadedData.schedule && typeof loadedData.schedule === "string") {
+              try {
+                  loadedData.schedule = JSON.parse(loadedData.schedule);
+              } catch (e) {
+                  // パース失敗時は初期値に戻す
+                  console.error("Schedule parse error", e);
+                  loadedData.schedule = { wakeup:0, morning:0, lunch:0, evening:0, bedtime:0 };
+              }
           }
 
           setFormData(loadedData);
-          setIsOpenDetails(true); // 編集時は詳細を開いておく
+          setIsOpenDetails(true);
         }
       }
     });
   }, [id]);
 
-  // AIに問い合わせる処理
   const handleAskAi = async () => {
     if (!formData.name) return alert("先にお薬の名前を入力してください");
     
-    // 他のお薬リストを作成（自分自身は除外）
     const currentMeds = allMeds
-      .filter(m => m.uuid !== id && m.target_user_id === formData.target_user_id) // 同じ人の薬に絞る
+      .filter(m => m.uuid !== id && m.target_user_id === formData.target_user_id)
       .map(m => m.name);
 
     setIsAiLoading(true);
@@ -82,19 +117,22 @@ export default function MedicationEditPage() {
       });
 
       if (result) {
+        const safeInteraction = parseCustomFormat(result.interaction);
+        
         setFormData(prev => ({
           ...prev,
           ai_description: result.description,
           ai_side_effects: result.side_effects,
-          ai_tags: result.tags,
-          ai_interaction: result.interaction
+          ai_tags: result.tags, 
+          ai_interaction: safeInteraction
         }));
-        alert("AIによる解析が完了しました！");
+        alert("AI情報を更新しました！");
       } else {
         alert("AI情報の取得に失敗しました。API設定を確認してください。");
       }
     } catch (e) {
-      alert("エラーが発生しました");
+      console.error(e);
+      alert("エラーが発生しました。通信環境やAPI設定を確認してください。");
     } finally {
       setIsAiLoading(false);
     }
@@ -106,19 +144,18 @@ export default function MedicationEditPage() {
     if (!g) return;
 
     const now = new Date().toISOString();
+    
     const newMed: Medication = {
-      uuid: id || crypto.randomUUID(), // 新規ならUUID生成
+      uuid: id || crypto.randomUUID(),
       group_id: g.group_id,
       name: formData.name!,
       target_user_id: formData.target_user_id,
       
-      // AIデータ (ここは常に配列として保存される)
       ai_tags: formData.ai_tags,
       ai_description: formData.ai_description,
       ai_side_effects: formData.ai_side_effects,
       ai_interaction: formData.ai_interaction,
 
-      // スケジュール & メモ
       schedule: formData.schedule,
       memo_taste: formData.memo_taste,
       taste_rating: formData.taste_rating,
@@ -126,17 +163,16 @@ export default function MedicationEditPage() {
       display_order: 0, 
       is_deleted: 0,
       updated_at: now,
-      created_at: id ? undefined : now // 更新時はcreated_atを触らない
+      created_at: id ? undefined : now
     };
 
-    // 既存の created_at を維持するためのマージ
     if (id) {
       const original = allMeds.find(m => m.uuid === id);
       if (original) newMed.created_at = original.created_at;
     }
 
     await LocalDb.upsertMedication(newMed);
-    nav(-1); // 戻る
+    nav(-1);
   };
 
   const handleDelete = async () => {
@@ -156,7 +192,6 @@ export default function MedicationEditPage() {
 
       <main style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
         
-        {/* 1. 基本情報 */}
         <div style={styles.card}>
           <label style={styles.label}>お薬の名前 (必須)</label>
           <input 
@@ -167,7 +202,6 @@ export default function MedicationEditPage() {
           />
         </div>
 
-        {/* 2. 詳細情報（アコーディオン） */}
         <button 
           onClick={() => setIsOpenDetails(!isOpenDetails)}
           style={{ ...styles.card, textAlign: "center", fontWeight: "bold", color: "#666", display: "flex", justifyContent: "center", alignItems: "center", gap: 8 }}
@@ -177,7 +211,6 @@ export default function MedicationEditPage() {
 
         {isOpenDetails && (
           <>
-            {/* 所有者 */}
             <div style={styles.card}>
               <label style={styles.label}>誰のお薬？</label>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -200,7 +233,6 @@ export default function MedicationEditPage() {
               </div>
             </div>
 
-            {/* AIサポートエリア */}
             <div style={{ ...styles.card, border: "2px solid #e0f2fe" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <span style={{ fontWeight: "bold", color: "#0369a1" }}>🤖 AIサポート</span>
@@ -209,18 +241,19 @@ export default function MedicationEditPage() {
                   disabled={isAiLoading}
                   style={{ background: "#0369a1", color: "white", border: "none", padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}
                 >
-                  {isAiLoading ? "解析中..." : "解説・タグを取得"}
+                  {isAiLoading ? "解析中..." : "解説・タグを更新"}
                 </button>
               </div>
 
               {/* 飲み合わせ警告 */}
-              {formData.ai_interaction && formData.ai_interaction.status !== 'none' && (
+              {formData.ai_interaction && formData.ai_interaction.status && formData.ai_interaction.status !== 'none' && (
                 <div style={{ 
                   background: formData.ai_interaction.status === 'danger' ? '#fecaca' : formData.ai_interaction.status === 'warning' ? '#fef08a' : '#d1fae5',
                   color: formData.ai_interaction.status === 'danger' ? '#7f1d1d' : formData.ai_interaction.status === 'warning' ? '#713f12' : '#064e3b',
-                  padding: 12, borderRadius: 8, marginBottom: 12, fontSize: 13
+                  padding: 12, borderRadius: 8, marginBottom: 12, fontSize: 13, lineHeight: "1.5"
                 }}>
-                  <strong>飲み合わせ判定:</strong> {formData.ai_interaction.message}
+                  <strong>飲み合わせ判定:</strong><br/>
+                  {formData.ai_interaction.message}
                 </div>
               )}
 
@@ -234,7 +267,6 @@ export default function MedicationEditPage() {
 
               <label style={styles.label}>用途タグ</label>
               <input 
-                // ★修正: ここで undefined チェックと配列チェックを行う
                 value={Array.isArray(formData.ai_tags) ? formData.ai_tags.join(", ") : ""}
                 onChange={e => setFormData({...formData, ai_tags: e.target.value.split(",").map(t=>t.trim())})}
                 style={styles.input}
@@ -242,7 +274,6 @@ export default function MedicationEditPage() {
               />
             </div>
 
-            {/* スケジュール */}
             <div style={styles.card}>
               <label style={styles.label}>飲むタイミング (回数)</label>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 4, textAlign: "center" }}>
@@ -267,7 +298,6 @@ export default function MedicationEditPage() {
               </div>
             </div>
 
-            {/* メモ */}
             <div style={styles.card}>
               <label style={styles.label}>親メモ (味・飲ませ方)</label>
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
