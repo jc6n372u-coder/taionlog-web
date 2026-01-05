@@ -45,8 +45,10 @@ export default function MedicationEditPage() {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [isOpenDetails, setIsOpenDetails] = useState(false);
   
-  // ★追加: 解説欄の拡大状態
+  // 解説欄の拡大状態
   const [isDescExpanded, setIsDescExpanded] = useState(false);
+  // ★追加: 親メモ欄の拡大状態
+  const [isMemoExpanded, setIsMemoExpanded] = useState(false);
 
   const [formData, setFormData] = useState<Partial<Medication>>({
     name: "",
@@ -264,10 +266,10 @@ export default function MedicationEditPage() {
               <textarea 
                 value={formData.ai_description || ""}
                 onChange={e => setFormData({...formData, ai_description: e.target.value})}
-                onClick={() => setIsDescExpanded(!isDescExpanded)} // ★ここが拡大トリガー
+                onClick={() => setIsDescExpanded(!isDescExpanded)}
                 style={{ 
                     ...styles.textarea, 
-                    minHeight: isDescExpanded ? 200 : 60, // ★高さ切替
+                    minHeight: isDescExpanded ? 200 : 60,
                     transition: "min-height 0.3s ease",
                     cursor: "pointer"
                 }}
@@ -308,7 +310,8 @@ export default function MedicationEditPage() {
             </div>
 
             <div style={styles.card}>
-              <label style={styles.label}>親メモ (味・飲ませ方)</label>
+              {/* ★変更: ラベルを追加 */}
+              <label style={styles.label}>親メモ (味・飲ませ方) - タップで拡大</label>
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                  {["good:😀", "normal:🙂", "bad:😖"].map(opt => {
                    const [val, icon] = opt.split(":");
@@ -328,7 +331,14 @@ export default function MedicationEditPage() {
               <textarea 
                 value={formData.memo_taste || ""}
                 onChange={e => setFormData({...formData, memo_taste: e.target.value})}
-                style={styles.textarea}
+                // ★追加: 拡大クリックハンドラ
+                onClick={() => setIsMemoExpanded(!isMemoExpanded)}
+                style={{
+                    ...styles.textarea,
+                    minHeight: isMemoExpanded ? 200 : 60, // 高さを切り替え
+                    transition: "min-height 0.3s ease",
+                    cursor: "pointer"
+                }}
                 placeholder="例: チョコアイスなら食べた"
               />
             </div>
@@ -336,7 +346,17 @@ export default function MedicationEditPage() {
         )}
       </main>
 
-      <div style={{ position: "fixed", bottom: 0, left: 0, width: "100%", padding: 16, background: "white", borderTop: "1px solid #eee" }}>
+      {/* ★変更: 画面下部固定ボタンのスタイルを調整 (右端見切れ防止) */}
+      <div style={{ 
+        position: "fixed", 
+        bottom: 0, 
+        left: 0, 
+        right: 0, // width: 100% ではなく right: 0 にする
+        padding: 16, 
+        background: "white", 
+        borderTop: "1px solid #eee",
+        boxSizing: "border-box" // paddingを含めて計算させる
+      }}>
         <button onClick={handleSave} style={{ width: "100%", padding: 16, background: "#111827", color: "white", borderRadius: 12, border: "none", fontWeight: "bold", fontSize: 16 }}>
           保 存
         </button>
