@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import type { User, Medication } from "../../utils/types";
@@ -22,7 +22,6 @@ export default function MedicationBookPage() {
   // フィルタリング処理
   const filteredMeds = medications.filter(m => {
     if (activeTab === "ALL") return true;
-    // target_user_id が未設定(全員) または 一致する場合
     return !m.target_user_id || m.target_user_id === activeTab;
   });
 
@@ -84,10 +83,45 @@ export default function MedicationBookPage() {
             // 所有者名の取得
             const owner = users.find(u => u.uuid === m.target_user_id);
             
+            // ★修正ポイント: 型定義(Array)と実データ(String)の矛盾を回避するため any でキャストして処理
+            let displayTags: string[] = [];
+            try {
+                // ここで一旦 any にしてTypeScriptの型チェックを回避
+                const rawTags = m.ai_tags as any;
+
+                if (Array.isArray(rawTags)) {
+                    // すでに配列ならそのまま使う
+                    displayTags = rawTags;
+                } else if (typeof rawTags === "string") {
+                    const trimmed = rawTags.trim();
+                    if (trimmed) {
+                        if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                            // JSON形式っぽいならパースを試みる
+                            try {
+                                const parsed = JSON.parse(trimmed);
+                                if (Array.isArray(parsed)) {
+                                    displayTags = parsed;
+                                } else {
+                                    displayTags = [trimmed];
+                                }
+                            } catch {
+                                // パース失敗したらそのまま表示
+                                displayTags = [trimmed];
+                            }
+                        } else {
+                            // ただの文字列（例: "けいれん止め"）なら、それを1つのタグとして扱う
+                            displayTags = [trimmed];
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Tag parsing error", e);
+                displayTags = [];
+            }
+
             return (
               <div 
                 key={m.uuid}
-                // 次回作成する詳細ページへ遷移 (IDを渡す)
                 onClick={() => nav(`/medication-book/edit/${m.uuid}`)}
                 style={{
                   background: "white",
@@ -108,9 +142,9 @@ export default function MedicationBookPage() {
                 </div>
 
                 {/* AIタグ表示エリア */}
-                {m.ai_tags && m.ai_tags.length > 0 && (
+                {displayTags.length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
-                    {m.ai_tags.map((tag, i) => (
+                    {displayTags.map((tag, i) => (
                       <span key={i} style={{ fontSize: 11, background: "#f3f4f6", color: "#4b5563", padding: "2px 6px", borderRadius: 4 }}>
                         {tag}
                       </span>
