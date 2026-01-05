@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import type { Medication, EventRow } from "../../utils/types";
@@ -6,7 +6,8 @@ import type { Medication, EventRow } from "../../utils/types";
 // DBから症状が読めなかった場合の初期値
 const FALLBACK_SYMPTOMS = ["咳", "鼻水", "頭痛", "喉の痛み", "食欲なし", "機嫌悪い", "嘔吐", "下痢", "発疹"];
 
-export function InputPage() {
+// ★修正: export default に変更
+export default function InputPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const targetUserId = params.get("userId");
