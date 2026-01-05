@@ -44,6 +44,9 @@ export default function MedicationEditPage() {
   const [allMeds, setAllMeds] = useState<Medication[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [isOpenDetails, setIsOpenDetails] = useState(false);
+  
+  // ★追加: 解説欄の拡大状態
+  const [isDescExpanded, setIsDescExpanded] = useState(false);
 
   const [formData, setFormData] = useState<Partial<Medication>>({
     name: "",
@@ -84,12 +87,11 @@ export default function MedicationEditPage() {
           // 2. 飲み合わせデータのパース
           loadedData.ai_interaction = parseCustomFormat(loadedData.ai_interaction);
 
-          // 3. ★追加: スケジュールのパース（ここが文字列だと回数が0になってしまう）
+          // 3. スケジュールのパース
           if (loadedData.schedule && typeof loadedData.schedule === "string") {
               try {
                   loadedData.schedule = JSON.parse(loadedData.schedule);
               } catch (e) {
-                  // パース失敗時は初期値に戻す
                   console.error("Schedule parse error", e);
                   loadedData.schedule = { wakeup:0, morning:0, lunch:0, evening:0, bedtime:0 };
               }
@@ -126,7 +128,8 @@ export default function MedicationEditPage() {
           ai_tags: result.tags, 
           ai_interaction: safeInteraction
         }));
-        alert("AI情報を更新しました！");
+        alert("AI情報を更新しました！(解説欄をご確認ください)");
+        setIsDescExpanded(true); // 更新時に自動で広げる
       } else {
         alert("AI情報の取得に失敗しました。API設定を確認してください。");
       }
@@ -257,11 +260,17 @@ export default function MedicationEditPage() {
                 </div>
               )}
 
-              <label style={styles.label}>解説 (AI)</label>
+              <label style={styles.label}>解説 (AI) - タップで拡大</label>
               <textarea 
                 value={formData.ai_description || ""}
                 onChange={e => setFormData({...formData, ai_description: e.target.value})}
-                style={{ ...styles.textarea, minHeight: 60 }}
+                onClick={() => setIsDescExpanded(!isDescExpanded)} // ★ここが拡大トリガー
+                style={{ 
+                    ...styles.textarea, 
+                    minHeight: isDescExpanded ? 200 : 60, // ★高さ切替
+                    transition: "min-height 0.3s ease",
+                    cursor: "pointer"
+                }}
                 placeholder="AIボタンを押すと自動入力されます"
               />
 
@@ -340,5 +349,5 @@ const styles: Record<string, React.CSSProperties> = {
   card: { background: "white", padding: 16, borderRadius: 12, border: "1px solid #ddd" },
   label: { display: "block", fontSize: 12, color: "#666", marginBottom: 6, fontWeight: "bold" },
   input: { width: "100%", padding: 12, borderRadius: 8, border: "1px solid #ddd", fontSize: 16, boxSizing: "border-box" },
-  textarea: { width: "100%", padding: 12, borderRadius: 8, border: "1px solid #ddd", fontSize: 14, minHeight: 80, boxSizing: "border-box", fontFamily: "inherit" }
+  textarea: { width: "100%", padding: 12, borderRadius: 8, border: "1px solid #ddd", fontSize: 14, minHeight: 60, boxSizing: "border-box", fontFamily: "inherit" }
 };
