@@ -13,7 +13,7 @@ export async function setMeta(key: string, value: string) {
   await db.put("meta", { key, value });
 }
 
-// ★追加: AI設定の取得
+// AI設定の取得
 export async function getAiSettings(): Promise<AiSettings | null> {
   const val = await getMeta("ai_settings");
   if (!val) return null;
@@ -24,7 +24,7 @@ export async function getAiSettings(): Promise<AiSettings | null> {
   }
 }
 
-// ★追加: AI設定の保存
+// AI設定の保存
 export async function saveAiSettings(settings: AiSettings) {
   await setMeta("ai_settings", JSON.stringify(settings));
 }
@@ -122,8 +122,18 @@ export async function upsertRecord(row: RecordRow) {
 export async function listMedications(group_id: string): Promise<Medication[]> {
   const db = await getDb();
   const all = await db.getAll("medications");
+  
+  // ★変更: ヨミガナ(yomi)でのソートを優先
   return all.filter(x => x.group_id === group_id && x.is_deleted === 0)
-            .sort((a,b)=>(a.sort_order ?? a.display_order ?? 0) - (b.sort_order ?? b.display_order ?? 0));
+            .sort((a, b) => {
+                // 1. ヨミガナがあればそれで比較
+                const yA = a.yomi || a.name || "";
+                const yB = b.yomi || b.name || "";
+                if (yA !== yB) return yA.localeCompare(yB, "ja");
+                
+                // 2. なければ登録順(作成日時がなければ更新日時)
+                return (a.created_at || a.updated_at).localeCompare(b.created_at || b.updated_at);
+            });
 }
 
 export async function getMedications(group_id?: string): Promise<Medication[]> {
@@ -220,7 +230,6 @@ export async function pruneLocalEventsIfNeeded(groupId: string, maxCount: number
 export const LocalDb = {
   getMeta, setMeta, getCurrentGroup, setCurrentGroup,
   getSettings, upsertSettings, ensureSettings,
-  // ★追加
   getAiSettings, saveAiSettings,
 
   listUsers, upsertUser, softDeleteUser, deleteUser, updateUserOrder,

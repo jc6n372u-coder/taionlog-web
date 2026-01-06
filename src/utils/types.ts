@@ -1,6 +1,6 @@
 ﻿export type ISO = string;
 
-// ★追加: AI設定（ユーザーローカル保存用）
+// AI設定（ユーザーローカル保存用）
 export type AiSettings = {
   geminiApiKey: string;
   geminiModel: string;
@@ -42,34 +42,59 @@ export type RecordRow = {
   created_at?: ISO;
 };
 
+// ★変更: お薬データの拡張
 export type Medication = {
   uuid: string;
   group_id: string;
   name: string;
-  default_interval_hours?: number;
+  
+  // ★追加: ヨミガナ（あいうえお順用）
+  yomi?: string; 
 
-  // ★追加: 誰の薬か
+  default_interval_hours?: number; // 旧仕様（互換性のため維持）
+
+  // 誰の薬か
   target_user_id?: string;
 
-  // ★追加: AI取得データ
-  ai_tags?: string[];       // 用途タグ
-  ai_description?: string;  // 解説
-  ai_side_effects?: string; // 副作用
-  ai_interaction?: {        // 飲み合わせ
+  // ★追加: 医師・薬剤師コメント
+  doctor_comment?: string;
+
+  // ★追加: 記録メニューに表示するか（アーカイブ機能）
+  // 0:非表示, 1:表示（デフォルトは1推奨）
+  show_in_input?: 0 | 1;
+
+  // AI取得データ
+  ai_tags?: string[];
+  ai_description?: string;
+  ai_side_effects?: string;
+  ai_interaction?: {
     status: 'danger' | 'warning' | 'ok' | 'none';
     message: string;
   };
 
-  // ★追加: 服薬スケジュール（回数入力）
+  // ★変更: 服薬スケジュール（構造拡張）
+  // fixed: 固定時間（朝昼晩など）
+  // interval: 間隔指定（8時間おきなど）
   schedule?: {
+    type?: 'fixed' | 'interval';
+    
+    // fixedモード用
     wakeup?: number;  // 起床
     morning?: number; // 朝
     lunch?: number;   // 昼
     evening?: number; // 夕
     bedtime?: number; // 就寝
+    
+    // intervalモード用
+    interval_hours?: number; // 何時間おき
+    max_times?: number;      // 1日何回まで
+    start_timing?: string;   // 開始の目安（例: 発熱時）
+
+    // リマインダー設定（分単位で保持、例: 480 = 8時間）
+    reminder_minutes?: number; 
   };
 
-  // ★追加: 親メモ・評価
+  // 親メモ・評価
   memo_taste?: string;
   taste_rating?: 'good' | 'normal' | 'bad';
 
@@ -138,7 +163,6 @@ export type SyncResponse = {
       events: EventRow[];
       reminders: Reminder[];
       settings: SettingsRow | null;
-      // groups の pull は GAS 側で拡張済み
     };
     pushed: Record<string, number>;
   };
