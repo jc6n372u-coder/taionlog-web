@@ -36,12 +36,12 @@ export default function AiSupportPage() {
       title: "💊 お薬手帳", 
       desc: "飲み合わせ・解説・記録", 
       emoji: "💊", 
-      action: () => nav("/medication-book"),
-      highlight: true
+      action: () => nav("/medication-book")
+      // highlight: true を削除して青枠を廃止
     },
   ];
 
-  // AIに相談する処理 (ApiClientを使用するように修正)
+  // AIに相談する処理
   const handleConsult = async () => {
     if (!inputText.trim()) return;
     
@@ -50,10 +50,7 @@ export default function AiSupportPage() {
     setErrorMsg("");
 
     try {
-      // GAS側でテンプレートが適用されますが、役割（コンテキスト）として送信
       const systemPrompt = "あなたは親切な小児科医療アシスタントです。";
-      
-      // 共通の通信機能を利用（これでURL設定エラーは解消されます）
       const res = await ApiClient.fetchAiGeneral(systemPrompt, inputText);
       
       if (res) {
@@ -92,7 +89,7 @@ export default function AiSupportPage() {
             onClick={item.action}
             style={{
               background: "white",
-              border: item.highlight ? "2px solid #66A9D9" : "1px solid #ddd",
+              border: "1px solid #ddd", // 青枠条件分岐を削除し統一
               borderRadius: 16,
               padding: "24px 16px",
               display: "flex",
@@ -111,7 +108,7 @@ export default function AiSupportPage() {
         ))}
       </main>
 
-      {/* ▼ 汎用AI相談エリア (Markdown対応) ▼ */}
+      {/* ▼ 汎用AI相談エリア ▼ */}
       <div style={{ padding: "0 16px", marginTop: 16 }}>
         <div style={{ background: "white", padding: 20, borderRadius: 16, boxShadow: "0 2px 4px rgba(0,0,0,0.05)" }}>
           <h3 style={{ margin: "0 0 12px 0", fontSize: 16, color: "#333", borderLeft: "4px solid #66A9D9", paddingLeft: 8 }}>🤖 AIに自由に相談</h3>

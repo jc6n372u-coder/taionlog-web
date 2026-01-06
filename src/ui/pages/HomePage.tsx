@@ -79,6 +79,7 @@ export default function HomePage() {
     nav(`/input?userId=${userId}`);
   };
 
+  // AIサポート画面へ
   const handleSupportClick = () => {
     if (isAiReady) {
       nav("/ai-support");
@@ -104,6 +105,7 @@ export default function HomePage() {
       </header>
 
       <main style={styles.body}>
+        {/* 最新の記録カード */}
         <div style={styles.card}>
             <div style={styles.cardHeader}>
                 <span>最新の記録</span>
@@ -126,11 +128,11 @@ export default function HomePage() {
                 let tempStr = "—";
                 if (rec) {
                     if (rec.temp === 0) {
-                         tempStr = "投薬"; 
+                          tempStr = "投薬"; 
                     } else if (showTemp) {
-                         tempStr = `${rec.temp.toFixed(1)}℃`;
+                          tempStr = `${rec.temp.toFixed(1)}℃`;
                     } else {
-                         tempStr = "**.*℃";
+                          tempStr = "**.*℃";
                     }
                 }
 
@@ -139,7 +141,7 @@ export default function HomePage() {
                         {/* 1. 名前エリア */}
                         <div style={styles.userName}>{u.name}</div>
                         
-                        {/* 2. 体温エリア (幅100pxに拡張して余白を作る) */}
+                        {/* 2. 体温エリア */}
                         <div style={{...styles.tempCol, color: tempColor, fontSize: rec && rec.temp === 0 ? 14 : 18}}>
                             {tempStr}
                         </div>
@@ -157,21 +159,39 @@ export default function HomePage() {
                 );
             })}
         </div>
+
+        {/* あんしん相談サポート一覧 */}
+        <div style={{...styles.card, marginTop: 16}}>
+            <div style={{fontSize: 14, fontWeight: "bold", color: "#333", marginBottom: 12}}>
+                あんしん相談サポート一覧
+            </div>
+            <div style={{display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10}}>
+                <button onClick={() => nav("/medication-book")} style={styles.menuBtn}>
+                    <span style={{fontSize: 24}}>💊</span>
+                    <span style={styles.menuLabel}>お薬手帳</span>
+                </button>
+                <button onClick={handleSupportClick} style={styles.menuBtn}>
+                    <span style={{fontSize: 24}}>👨‍⚕️</span>
+                    <span style={styles.menuLabel}>AI相談</span>
+                </button>
+                <button onClick={() => nav("/settings/symptoms")} style={styles.menuBtn}>
+                    <span style={{fontSize: 24}}>📝</span>
+                    <span style={styles.menuLabel}>症状メモ</span>
+                </button>
+            </div>
+        </div>
+
       </main>
 
+      {/* FABボタン (記録ショートカット) */}
       <button 
-        onClick={handleSupportClick} 
-        style={{ 
-          ...styles.fab,
-          background: isAiReady ? "#111827" : "#9ca3af",
-          width: "auto",
-          padding: "0 24px",
-          borderRadius: 30,
-          fontSize: 16,
-          transition: "background 0.3s"
+        onClick={() => {
+            if (users.length > 0) startRecord(users[0].uuid);
+            else nav("/settings");
         }}
+        style={styles.fab}
       >
-        {isAiReady ? "🤖 サポート" : "⚙️ 設定が必要"}
+        ＋
       </button>
 
     </div>
@@ -192,10 +212,17 @@ const styles: Record<string, React.CSSProperties> = {
   row: { display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #eee", cursor: "pointer" },
   userName: { flex: 1, fontWeight: "bold", color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 8 },
   
-  // ★幅を調整してバランス改善
-  tempCol: { width: 100, fontWeight: "bold", textAlign: "left", flexShrink: 0 }, // 64 -> 100
-  dateCol: { width: 90, fontSize: 13, color: "#666", textAlign: "left", flexShrink: 0 }, // 80 -> 90
+  tempCol: { width: 100, fontWeight: "bold", textAlign: "left", flexShrink: 0 },
+  dateCol: { width: 90, fontSize: 13, color: "#666", textAlign: "left", flexShrink: 0 },
   relativeDateCol: { fontSize: 12, color: "#999", textAlign: "right", marginLeft: "auto", minWidth: 45, flexShrink: 0 },
 
-  fab: { position: "fixed", bottom: 24, right: 24, color: "white", border: "none", height: 56, fontWeight: "bold", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" },
+  // メニューボタンのスタイル (青枠なし、シンプルに)
+  menuBtn: {
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      padding: 12, background: "#f9fafb", borderRadius: 12, border: "1px solid #eee", // 青枠削除
+      cursor: "pointer", height: 80
+  },
+  menuLabel: { fontSize: 11, fontWeight: "bold", color: "#333", marginTop: 4 },
+
+  fab: { position: "fixed", bottom: 24, right: 24, background: "#111827", color: "white", border: "none", width: 56, height: 56, borderRadius: 28, fontSize: 24, fontWeight: "bold", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" },
 };

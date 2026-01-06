@@ -156,7 +156,7 @@ export default function MedicationEditPage() {
       uuid: id || crypto.randomUUID(),
       group_id: g.group_id,
       name: formData.name!,
-      yomi: formData.yomi || formData.name!, // ヨミガナがなければ名前を入れる
+      yomi: formData.yomi || formData.name!, // よみがながなければ名前を入れる
       target_user_id: formData.target_user_id,
       
       doctor_comment: formData.doctor_comment,
@@ -223,7 +223,7 @@ export default function MedicationEditPage() {
           
           <div style={{ height: 16 }}></div>
           
-          <label style={styles.label}>ヨミガナ (並び替え用)</label>
+          <label style={styles.label}>よみがな (並び替え用)</label>
           <input 
             value={formData.yomi || ""}
             onChange={e => setFormData({...formData, yomi: e.target.value})}
@@ -433,14 +433,17 @@ export default function MedicationEditPage() {
             <div style={styles.card}>
               <label style={styles.label}>親メモ (味・飲ませ方) - タップで拡大</label>
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                 {["good:😀", "normal:🙂", "bad:😖"].map(opt => {
+                 {/* ★変更: アイコンを ◎ ○ △ に変更 */}
+                 {["good:◎", "normal:○", "bad:△"].map(opt => {
                    const [val, icon] = opt.split(":");
                    return (
                      <button key={val} 
                        onClick={() => setFormData({...formData, taste_rating: val as any})}
                        style={{ 
                          flex: 1, padding: 8, borderRadius: 8, border: "1px solid #ddd",
-                         background: formData.taste_rating === val ? "#e0f2fe" : "white"
+                         background: formData.taste_rating === val ? "#e0f2fe" : "white",
+                         fontSize: 18, fontWeight: "bold",
+                         color: formData.taste_rating === val ? "#0369a1" : "#666"
                        }}
                      >
                        {icon}
