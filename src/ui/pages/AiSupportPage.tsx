@@ -37,7 +37,7 @@ export default function AiSupportPage() {
       desc: "飲み合わせ・解説・記録", 
       emoji: "💊", 
       action: () => nav("/medication-book")
-      // highlight: true を削除して青枠を廃止
+      // highlight: true を削除して青枠廃止
     },
   ];
 
@@ -89,7 +89,7 @@ export default function AiSupportPage() {
             onClick={item.action}
             style={{
               background: "white",
-              border: "1px solid #ddd", // 青枠条件分岐を削除し統一
+              border: "1px solid #ddd", // 青枠条件を削除し統一
               borderRadius: 16,
               padding: "24px 16px",
               display: "flex",
