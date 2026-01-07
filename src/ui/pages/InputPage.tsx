@@ -8,7 +8,6 @@ const FALLBACK_SYMPTOMS = ["咳", "鼻水", "頭痛", "喉の痛み", "食欲な
 
 // 前回の服用時間を計算するためのヘルパー
 function getLastTakenTime(medId: string, events: EventRow[], currentEventId: string | null): string | null {
-    // 自分自身（編集中）を除外して、過去の同じ薬のイベントを探す
     const targetEvents = events.filter(e => {
         if (e.uuid === currentEventId) return false;
         if (e.event_type !== "medication") return false;
@@ -29,13 +28,22 @@ function getLastTakenTime(medId: string, events: EventRow[], currentEventId: str
     return targetEvents[0].occurred_at;
 }
 
-// 時間差分を表示形式に変換 (例: "8時間経過")
+// 時間差分を表示形式に変換 (例: "8時間経過" or "1日前")
 function getElapsedText(lastIso: string, currentIso: string): string {
-    const last = new Date(lastIso).getTime();
-    const curr = new Date(currentIso).getTime();
-    const diffMin = Math.floor((curr - last) / 60000);
+    const last = new Date(lastIso);
+    const curr = new Date(currentIso);
     
+    const diffMs = curr.getTime() - last.getTime();
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+    if (diffHours >= 24) {
+        const diffDays = Math.floor(diffHours / 24);
+        return `${diffDays}日前`;
+    }
+    
+    const diffMin = Math.floor(diffMs / 60000);
     if (diffMin < 60) return `${diffMin}分前`;
+    
     const h = Math.floor(diffMin / 60);
     const m = diffMin % 60;
     return `${h}時間${m > 0 ? m + "分" : ""}経過`;
@@ -62,14 +70,11 @@ export default function InputPage() {
   const [meds, setMeds] = useState<Medication[]>([]);
   const [selMeds, setSelMeds] = useState<string[]>([]); 
   
-  // 過去の全イベント（前回服用チェック用）
   const [allUserEvents, setAllUserEvents] = useState<EventRow[]>([]);
-
   const [loadedMedEvents, setLoadedMedEvents] = useState<EventRow[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [userName, setUserName] = useState("");
 
-  // リマインダー設定モーダル用
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [reminderTargetMeds, setReminderTargetMeds] = useState<Medication[]>([]);
 
@@ -83,7 +88,6 @@ export default function InputPage() {
     LocalDb.getCurrentGroup().then(async (g) => {
         if (!g) return;
         
-        // お薬マスタ取得
         setMeds(await LocalDb.getMedications(g.group_id));
 
         const key = `symptoms_${g.group_id}`;
@@ -95,11 +99,9 @@ export default function InputPage() {
             const u = users.find(u => u.uuid === targetUserId);
             if (u) setUserName(u.name);
 
-            // 過去イベント全取得
             const allEvents = await LocalDb.listEvents(targetUserId);
             setAllUserEvents(allEvents);
 
-            // === 編集データの読み込み ===
             if (editId) {
                 if (editType === 'temp') {
                     const recs = await LocalDb.listRecords(targetUserId);
@@ -196,7 +198,6 @@ export default function InputPage() {
       }
   };
 
-  // 保存処理
   const handleSave = async () => {
     if (isSaving) return;
     if (!targetUserId) {
@@ -204,9 +205,6 @@ export default function InputPage() {
         return;
     }
     
-    // リマインダー設定が必要な薬があるかチェック
-    // 条件: 今回選択された薬の中で、reminder_minutes > 0 の設定があるもの
-    // かつ、まだリマインダーモーダルを表示していない場合
     if (!showReminderModal && selMeds.length > 0) {
         const targets = meds.filter(m => 
             selMeds.includes(m.uuid) && 
@@ -215,7 +213,6 @@ export default function InputPage() {
         );
         
         if (targets.length > 0) {
-            // モーダルを表示して一旦停止
             setReminderTargetMeds(targets);
             setShowReminderModal(true);
             return;
@@ -225,7 +222,6 @@ export default function InputPage() {
     await executeSave();
   };
 
-  // 実際の保存実行（リマインダー登録含む）
   const executeSave = async (remindersToSet: { medId: string, minutes: number }[] = []) => {
     setIsSaving(true);
     try {
@@ -244,7 +240,6 @@ export default function InputPage() {
 
       const recordUuid = (editType === 'temp' && editId) ? editId : crypto.randomUUID();
 
-      // 1. 体温記録
       if (mode === "temp") {
         await LocalDb.upsertRecord({
           uuid: recordUuid,
@@ -258,7 +253,6 @@ export default function InputPage() {
         });
       }
 
-      // 2. 投薬イベント
       for (const medId of selMeds) {
         const existingEvent = loadedMedEvents.find(e => {
             try {
@@ -291,7 +285,6 @@ export default function InputPage() {
         }
       }
 
-      // 削除された投薬イベントの処理
       for (const evt of loadedMedEvents) {
           let evtMedId = evt.payload || "";
           try {
@@ -308,7 +301,6 @@ export default function InputPage() {
           }
       }
 
-      // 3. 投薬のみモードのメモ
       if (mode === "meds" && finalMemo && !editId && selMeds.length === 0) {
          await LocalDb.upsertRecord({
           uuid: crypto.randomUUID(),
@@ -322,32 +314,18 @@ export default function InputPage() {
         });
       }
 
-      // === 4. リマインダー登録 (Notification API) ===
       if (remindersToSet.length > 0 && "Notification" in window) {
           if (Notification.permission === "default") {
               await Notification.requestPermission();
           }
           if (Notification.permission === "granted") {
-              // サービスワーカーの登録取得（PWA前提）
               const reg = await navigator.serviceWorker.ready;
               
               for (const r of remindersToSet) {
                   const med = meds.find(m => m.uuid === r.medId);
                   if (!med) continue;
                   
-                  // 通知予定時刻
                   const targetTime = new Date(new Date(ts).getTime() + r.minutes * 60000);
-                  
-                  // showNotificationは即時通知用だが、timestampオプションで未来を指定しても
-                  // ブラウザによっては即時出てしまうことがある。
-                  // 本格的な遅延通知には Push API + Server が必要だが、
-                  // ここでは簡易的に「現在時刻 + 遅延」で通知を試みるか、
-                  // もしくはアプリ起動時のチェックで出す設計にするのが一般的。
-                  // 今回はブラウザの制限上、setTimeoutでアプリが開いている間のみ有効な簡易実装とするか、
-                  // またはサーバーレスの限界として「カレンダー登録」などを促すのが現実的。
-                  
-                  // ★ここでは「リマインダーデータ(Reminder)」をDBに保存し、
-                  //   アプリ起動時や定期チェックで通知を出す仕組みに繋げるためのデータ保存を行う。
                   
                   await LocalDb.upsertReminder({
                       uuid: crypto.randomUUID(),
@@ -361,7 +339,6 @@ export default function InputPage() {
                       updated_at: new Date().toISOString()
                   });
               }
-              // ユーザーへのフィードバック
               alert(`${remindersToSet.length}件のリマインダーをセットしました`);
           }
       }
@@ -374,12 +351,8 @@ export default function InputPage() {
     }
   };
 
-  // 表示する薬リストのフィルタリング
   const displayMeds = meds.filter(m => {
-      // 1. 今回選択されている薬は必ず表示
       if (selMeds.includes(m.uuid)) return true;
-      // 2. 設定で「表示」になっている薬を表示
-      // (show_in_input が undefined の場合は true 扱い)
       return m.show_in_input !== 0; 
   });
 
@@ -414,7 +387,6 @@ export default function InputPage() {
 
       <div style={styles.body}>
         
-        {/* === 体温入力カード === */}
         {mode === "temp" && (
           <div style={styles.card}>
             <div style={{...styles.tempDisplay, color: getTempColor(temp)}}>
@@ -442,7 +414,6 @@ export default function InputPage() {
           </div>
         )}
 
-        {/* === 日時カード === */}
         <div style={styles.card}>
           <div style={styles.label}>日時</div>
           <div style={styles.row}>
@@ -461,7 +432,6 @@ export default function InputPage() {
           </div>
         </div>
 
-        {/* === 症状カード === */}
         {mode === "temp" && (
           <div style={styles.card}>
             <div style={styles.rowBetween}>
@@ -488,7 +458,6 @@ export default function InputPage() {
           </div>
         )}
 
-        {/* === お薬カード === */}
         <div style={styles.card}>
           <div style={styles.rowBetween}>
             <div style={styles.label}>お薬</div>
@@ -498,11 +467,9 @@ export default function InputPage() {
           {displayMeds.length === 0 ? <div style={styles.emptyMsg}>表示できるお薬がありません</div> : (
             <div style={styles.list}>
               {displayMeds.map((m) => {
-                // 前回情報の取得
                 const lastTime = getLastTakenTime(m.uuid, allUserEvents, editId);
                 const currentIso = `${date}T${time}`;
                 const elapsedText = lastTime ? getElapsedText(lastTime, currentIso) : null;
-                const isIntervalMode = m.schedule?.type === 'interval';
 
                 return (
                   <label key={m.uuid} style={selMeds.includes(m.uuid) ? styles.listItemActive : styles.listItem}>
@@ -515,14 +482,14 @@ export default function InputPage() {
                     <div style={{flex: 1}}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span>{m.name}</span>
-                            {/* 間隔モードで、前回情報があれば表示 */}
-                            {isIntervalMode && elapsedText && (
+                            {/* モードに関わらず前回情報があれば表示 */}
+                            {elapsedText && (
                                 <span style={{ fontSize: 11, background: "#fef3c7", color: "#d97706", padding: "2px 6px", borderRadius: 4 }}>
                                     {elapsedText}
                                 </span>
                             )}
                         </div>
-                        {isIntervalMode && lastTime && (
+                        {lastTime && (
                              <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>
                                  前回: {new Date(lastTime).toLocaleString([], {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'})}
                              </div>
@@ -535,7 +502,6 @@ export default function InputPage() {
           )}
         </div>
 
-        {/* === メモカード === */}
         <div style={styles.card}>
           <div style={styles.label}>メモ</div>
           <textarea
@@ -557,7 +523,6 @@ export default function InputPage() {
 
       </div>
 
-      {/* === リマインダー設定モーダル === */}
       {showReminderModal && (
           <div style={styles.modalOverlay}>
               <div style={styles.modalContent}>
@@ -575,14 +540,13 @@ export default function InputPage() {
                   ))}
                   <div style={{display:"flex", gap:10, marginTop:20}}>
                       <button 
-                          onClick={() => executeSave([])} // 通知なしで保存
+                          onClick={() => executeSave([])} 
                           style={{flex:1, padding:12, borderRadius:8, border:"1px solid #ddd", background:"white", cursor:"pointer"}}
                       >
                           通知しない
                       </button>
                       <button 
                           onClick={() => {
-                              // 設定値をそのまま使う
                               const reminders = reminderTargetMeds.map(m => ({
                                   medId: m.uuid,
                                   minutes: m.schedule?.reminder_minutes || 0
@@ -602,7 +566,6 @@ export default function InputPage() {
   );
 }
 
-// === スタイル定義 ===
 const styles: Record<string, React.CSSProperties> = {
   page: { minHeight: "100dvh", background: "#f4f5f7", fontFamily: "sans-serif" },
   appBar: { height: 56, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 16px", background: "#66A9D9", color: "white", position: "sticky", top: 0, zIndex: 10, boxShadow: "0 2px 4px rgba(0,0,0,0.1)" },
@@ -634,8 +597,6 @@ const styles: Record<string, React.CSSProperties> = {
   listItem: { display: "flex", alignItems: "center", padding: 12, borderRadius: 8, border: "1px solid #eee", background: "white", cursor: "pointer" },
   listItemActive: { display: "flex", alignItems: "center", padding: 12, borderRadius: 8, border: "1px solid #66A9D9", background: "#f0f9ff", cursor: "pointer", fontWeight: "bold", color: "#005a9e" },
   textArea: { width: "100%", height: 80, padding: 10, borderRadius: 8, border: "1px solid #ddd", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" },
-  
-  // モーダル用
   modalOverlay: { position: "fixed", top:0, left:0, width:"100%", height:"100%", background:"rgba(0,0,0,0.5)", display:"flex", justifyContent:"center", alignItems:"center", zIndex: 100 },
   modalContent: { width: "85%", maxWidth: 400, background: "white", borderRadius: 12, padding: 20, boxShadow: "0 4px 12px rgba(0,0,0,0.2)" },
 };

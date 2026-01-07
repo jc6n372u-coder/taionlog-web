@@ -4,7 +4,8 @@ import 'chartjs-adapter-date-fns';
 import type { ChartData, ChartOptions } from 'chart.js';
 
 type TempPoint = { time: number; value: number };
-type MedPoint = { time: number; name: string };
+// ★変更: value (Y軸の位置) を受け取れるようにする
+type MedPoint = { time: number; name: string; value?: number };
 
 export type ViewMode = 'day' | 'week' | 'month' | 'year';
 
@@ -18,7 +19,6 @@ const COLORS = {
   BLUE: '#66A9D9',
   FEVER: '#FF5722',
   MEDICATION: '#F59E0B',
-  // ★追加: 折れ線を目立たなくするためのグレー
   LINE_GRAY: '#CBD5E1', 
 };
 
@@ -49,17 +49,14 @@ export default function TemperatureMedicationChart({ temperatures, medications, 
           x: t.time,
           y: t.value,
         })),
-        // ★変更: 線をグレーにして、太さを少し控えめに
         borderColor: COLORS.LINE_GRAY,
         borderWidth: 2,
-        
-        // ★変更: 点を目立たせる（色は維持）
         backgroundColor: COLORS.BLUE,
         pointBackgroundColor: temperatures.map(t =>
           t.value >= FEVER_LINE ? COLORS.FEVER : COLORS.BLUE
         ),
-        pointRadius: 5,      // ★4 -> 5 に少し拡大
-        pointHoverRadius: 7, // ★6 -> 7 に少し拡大
+        pointRadius: 5,
+        pointHoverRadius: 7,
         tension: 0.3,
       },
       {
@@ -78,12 +75,13 @@ export default function TemperatureMedicationChart({ temperatures, medications, 
         label: '投薬',
         data: medications.map(m => ({
           x: m.time,
-          y: 39.0,
+          // ★修正: 受け取ったvalueがあればそれを使い、なければデフォルト37.0（または以前の39.0）
+          y: m.value ?? 37.0,
           medName: m.name
         })),
         backgroundColor: COLORS.MEDICATION,
         pointStyle: 'rectRot',
-        pointRadius: 7, // ★6 -> 7 に少し拡大
+        pointRadius: 7,
         pointHoverRadius: 10,
       }
     ],
@@ -93,9 +91,8 @@ export default function TemperatureMedicationChart({ temperatures, medications, 
     responsive: true,
     maintainAspectRatio: false,
     interaction: {
-      // ★変更: X軸固定をやめて、カーソルから最短距離の点を拾う設定に変更
       mode: 'nearest',
-      axis: 'xy', // XとY両方の距離を見る
+      axis: 'xy',
       intersect: false,
     },
     plugins: {
@@ -111,7 +108,6 @@ export default function TemperatureMedicationChart({ temperatures, medications, 
             return `${context.parsed.y.toFixed(1)}℃`;
           },
           title: (context: any) => {
-             // データが存在しない場合にクラッシュしないようガード
              if (!context || !context.length || !context[0]?.parsed) {
                  return '';
              }
@@ -129,7 +125,7 @@ export default function TemperatureMedicationChart({ temperatures, medications, 
           unit: timeUnit,
           displayFormats: { 
             hour: 'H:mm', 
-            day: 'd',
+            day: 'd', 
             month: 'M月' 
           } 
         },

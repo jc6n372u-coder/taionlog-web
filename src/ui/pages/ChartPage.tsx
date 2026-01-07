@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+﻿import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import TemperatureMedicationChart, { ViewMode } from "../../features/chart/TemperatureMedicationChart";
@@ -17,7 +17,7 @@ export default function ChartPage() {
   const [records, setRecords] = useState<RecordRow[]>([]);
   const [meds, setMeds] = useState<EventRow[]>([]);
   
-  // ★追加: お薬の名前を引くためのマスタデータ
+  // お薬の名前を引くためのマスタデータ
   const [medMaster, setMedMaster] = useState<Medication[]>([]);
   
   const [viewMode, setViewMode] = useState<ViewMode>('week'); 
@@ -31,7 +31,7 @@ export default function ChartPage() {
       setUsers(us);
       if (us.length > 0) setSelUser(us[0].uuid);
 
-      // ★追加: お薬マスタを取得して保存
+      // お薬マスタを取得して保存
       const mm = await LocalDb.getMedications(g.group_id);
       setMedMaster(mm);
     });
@@ -58,20 +58,18 @@ export default function ChartPage() {
     }
   }, [viewMode]);
 
-  // ★お薬IDから名前を解決する関数
+  // お薬IDから名前を解決する関数
   const getMedName = (payload: string) => {
       if (!payload) return "未指定";
 
-      // 1. マスタからIDで直接探す (今のInputPageの保存形式)
+      // 1. マスタからIDで直接探す
       const directMatch = medMaster.find(m => m.uuid === payload);
       if (directMatch) return directMatch.name;
 
-      // 2. JSON形式の場合 (古いデータや特殊な保存形式)
+      // 2. JSON形式の場合
       try {
           const obj = JSON.parse(payload);
-          // 名前が直接入っている場合
           if (obj.medName) return obj.medName;
-          // IDが入っている場合
           if (obj.medId) {
              const match = medMaster.find(m => m.uuid === obj.medId);
              if (match) return match.name;
@@ -90,18 +88,27 @@ export default function ChartPage() {
       .filter(r => r.temp > 30.0)
       .map(r => ({ time: new Date(r.measured_at).getTime(), value: r.temp }));
 
+    // 投薬マークのプロット位置計算
     const medPoints = meds
       .filter(m => (now - new Date(m.occurred_at).getTime()) < windowMs)
       .map(m => {
-        // ★修正: 名前解決関数を使用
+        const medTime = new Date(m.occurred_at).getTime();
+        
+        // 投薬時刻の前後1時間以内の体温記録を探す
+        const nearTemp = tempPoints.find(t => Math.abs(t.time - medTime) < 60 * 60 * 1000);
+        
+        // 近くに体温があればそれ+0.3、なければデフォルト37.0の位置
+        const plotValue = nearTemp ? nearTemp.value + 0.3 : 37.0;
+
         return { 
-            time: new Date(m.occurred_at).getTime(), 
-            name: getMedName(m.payload || "") 
+            time: medTime, 
+            name: getMedName(m.payload || ""),
+            value: plotValue // Y軸の位置
         };
       });
 
     return { tempPoints, medPoints };
-  }, [records, meds, windowDays, medMaster]); // medMasterが変わったら再計算
+  }, [records, meds, windowDays, medMaster]); 
 
   const combinedList = useMemo(() => {
     const now = new Date().getTime();
@@ -133,7 +140,6 @@ export default function ChartPage() {
       if ((now - new Date(m.occurred_at).getTime()) >= windowMs) return;
       const key = m.occurred_at;
       
-      // ★修正: 名前解決関数を使用
       const name = getMedName(m.payload || "");
 
       if (map.has(key)) {
@@ -178,6 +184,7 @@ export default function ChartPage() {
 
       <div style={{padding: 16, background: "white", marginBottom: 16}}>
         <div style={{display: "flex", justifyContent: "center", marginBottom: 16}}>
+            {/* ★修正箇所: 波括弧を1つ外しました */}
             <div style={styles.segmentControl}>
                 {['day', 'week', 'month', 'year'].map(mode => (
                     <button 
