@@ -3,38 +3,52 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import type { Medication, EventRow } from "../../utils/types";
 
-// DBから症状が読めなかった場合の初期値
+// Fallback symptoms if DB load fails
 const FALLBACK_SYMPTOMS = ["咳", "鼻水", "頭痛", "喉の痛み", "食欲なし", "機嫌悪い", "嘔吐", "下痢", "発疹"];
 
-// 前回の服用時間を計算するためのヘルパー
-function getLastTakenTime(medId: string, events: EventRow[], currentEventId: string | null): string | null {
+// Helper to calculate last taken time
+// Added filter: ignore events that happened AFTER the current reference time
+function getLastTakenTime(medId: string, events: EventRow[], currentEventId: string | null, referenceTimeIso: string): string | null {
+    const refTime = new Date(referenceTimeIso).getTime();
+
     const targetEvents = events.filter(e => {
+        // Exclude self (if editing)
         if (e.uuid === currentEventId) return false;
+        // Must be medication event
         if (e.event_type !== "medication") return false;
         
+        // Check medication ID match
         let mId = e.payload;
         try {
             const p = JSON.parse(e.payload || "{}");
             if (typeof p !== 'string' && p.medId) mId = p.medId;
         } catch {}
-        
-        return mId === medId;
+        if (mId !== medId) return false;
+
+        // ★ Fix: Filter out future events relative to the current editing time
+        const eventTime = new Date(e.occurred_at).getTime();
+        if (eventTime >= refTime) return false;
+
+        return true;
     });
 
     if (targetEvents.length === 0) return null;
     
-    // 新しい順にソート
+    // Sort descending (newest first)
     targetEvents.sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
     return targetEvents[0].occurred_at;
 }
 
-// 時間差分を表示形式に変換 (例: "8時間経過" or "1日前")
+// Format time difference
 function getElapsedText(lastIso: string, currentIso: string): string {
     const last = new Date(lastIso);
     const curr = new Date(currentIso);
     
     const diffMs = curr.getTime() - last.getTime();
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+    // If negative (should be prevented by getLastTakenTime logic, but safe guard)
+    if (diffMs < 0) return "";
 
     if (diffHours >= 24) {
         const diffDays = Math.floor(diffHours / 24);
@@ -60,7 +74,7 @@ export default function InputPage() {
   const [mode, setMode] = useState<"temp" | "meds">("temp");
   const [symptomsList, setSymptomsList] = useState<string[]>([]);
 
-  // 入力データ
+  // Input Data
   const [temp, setTemp] = useState<number>(36.5);
   const [date, setDate] = useState<string>("");
   const [time, setTime] = useState<string>("");
@@ -102,6 +116,7 @@ export default function InputPage() {
             const allEvents = await LocalDb.listEvents(targetUserId);
             setAllUserEvents(allEvents);
 
+            // Load data for editing
             if (editId) {
                 if (editType === 'temp') {
                     const recs = await LocalDb.listRecords(targetUserId);
@@ -467,8 +482,9 @@ export default function InputPage() {
           {displayMeds.length === 0 ? <div style={styles.emptyMsg}>表示できるお薬がありません</div> : (
             <div style={styles.list}>
               {displayMeds.map((m) => {
-                const lastTime = getLastTakenTime(m.uuid, allUserEvents, editId);
+                // Pass current edited time as reference to filter future events
                 const currentIso = `${date}T${time}`;
+                const lastTime = getLastTakenTime(m.uuid, allUserEvents, editId, currentIso);
                 const elapsedText = lastTime ? getElapsedText(lastTime, currentIso) : null;
 
                 return (
@@ -482,7 +498,6 @@ export default function InputPage() {
                     <div style={{flex: 1}}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span>{m.name}</span>
-                            {/* モードに関わらず前回情報があれば表示 */}
                             {elapsedText && (
                                 <span style={{ fontSize: 11, background: "#fef3c7", color: "#d97706", padding: "2px 6px", borderRadius: 4 }}>
                                     {elapsedText}
