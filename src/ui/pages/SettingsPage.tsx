@@ -2,6 +2,8 @@
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import { AdminToolsPanel } from "../components/AdminToolsPanel";
+// ★追加: 自動更新表示コンポーネントをインポート
+import { VersionUpdateNotice } from "../../components/VersionUpdateNotice";
 import type { SettingsRow } from "../../utils/types";
 
 // 通知許可
@@ -69,7 +71,7 @@ export default function SettingsPage() {
             <span style={{color: "#ccc"}}>›</span>
           </button>
 
-          {/* ★追加: AI設定 */}
+          {/* AI設定 */}
           <button onClick={() => nav("/settings/ai")} style={styles.menuItem}>
             <div>
               <span style={{fontWeight: "bold"}}>AI機能の設定</span>
@@ -109,6 +111,9 @@ export default function SettingsPage() {
           <h3 style={styles.h3}>管理メニュー</h3>
           <AdminToolsPanel />
         </section>
+
+        {/* ★追加: ここに自動更新バージョン情報を表示 */}
+        <VersionUpdateNotice />
       </main>
     </div>
   );
