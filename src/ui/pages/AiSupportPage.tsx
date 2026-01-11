@@ -2,7 +2,7 @@
 import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { ApiClient } from "../../data/remote/apiClient";
-import { LocalDb } from "../../data/local/localDb"; // ★追加
+import { LocalDb } from "../../data/local/localDb";
 
 export default function AiSupportPage() {
   const nav = useNavigate();
@@ -13,10 +13,10 @@ export default function AiSupportPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   
-  // ★追加: 使用モデル名の表示用
+  // 使用モデル名の表示用
   const [modelName, setModelName] = useState("");
 
-  // ★追加: 設定からAIモデル名を判定して取得
+  // 設定からAIモデル名を判定して取得
   useEffect(() => {
     LocalDb.getAiSettings().then(s => {
       if (s?.geminiApiKey) {
@@ -156,7 +156,16 @@ export default function AiSupportPage() {
           {/* AI回答表示エリア */}
           {aiResponse && (
             <div style={{ marginTop: 24, borderTop: "1px solid #eee", paddingTop: 16 }}>
-              <div style={{ fontSize: 15, lineHeight: 1.8, color: "#333", textAlign: "left" }}>
+              <div style={{ 
+                fontSize: 15, 
+                lineHeight: 1.8, 
+                color: "#333", 
+                textAlign: "left",
+                // ★修正: 横幅見切れ対策
+                wordBreak: "break-word", 
+                overflowWrap: "anywhere",
+                maxWidth: "100%"
+              }}>
                 <ReactMarkdown components={{
                    h3: ({node, ...props}) => <h3 style={{ color: "#0284c7", borderBottom: "2px solid #e0f2fe", paddingBottom: 6, marginTop: 24, marginBottom: 12, fontSize: 18 }} {...props} />,
                    strong: ({node, ...props}) => <strong style={{ background: "linear-gradient(transparent 60%, #fecaca 60%)", fontWeight: "bold" }} {...props} />,
@@ -167,7 +176,7 @@ export default function AiSupportPage() {
                 </ReactMarkdown>
               </div>
               
-              {/* ★追加: AIモデル名の表示 */}
+              {/* AIモデル名の表示 */}
               <div style={{ textAlign: "right", marginTop: 12, fontSize: 11, color: "#bbb", fontFamily: "sans-serif" }}>
                 Powered by {modelName}
               </div>

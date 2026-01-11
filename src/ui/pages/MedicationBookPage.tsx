@@ -54,10 +54,10 @@ export default function MedicationBookPage() {
   const [medications, setMedications] = useState<Medication[]>([]);
   const [activeTab, setActiveTab] = useState<string>("ALL");
   
-  // ★変更: 展開IDではなく「選択中のお薬（詳細表示用）」
-  const [selectedMed, setSelectedMed] = useState<Medication | null>(null);
+  // ★変更: モーダル用stateを削除し、展開中のアイテムIDを管理するstateに変更
+  const [expandedMedId, setExpandedMedId] = useState<string | null>(null);
 
-  // ★追加: AIモデル名表示用
+  // AIモデル名表示用
   const [modelName, setModelName] = useState("");
 
   // スクロール制御用Ref
@@ -105,8 +105,14 @@ export default function MedicationBookPage() {
     }
   };
 
-  // 詳細モーダルを閉じる
-  const closeDetail = () => setSelectedMed(null);
+  // ★変更: アコーディオンの開閉切り替え
+  const toggleDetail = (uuid: string) => {
+    if (expandedMedId === uuid) {
+      setExpandedMedId(null); // 既に開いていれば閉じる
+    } else {
+      setExpandedMedId(uuid); // 開く
+    }
+  };
 
   return (
     <div style={{ minHeight: "100dvh", background: "#f4f5f7", paddingBottom: 80, display: "flex", flexDirection: "column" }}>
@@ -179,36 +185,126 @@ export default function MedicationBookPage() {
                   {group.map(m => {
                     const owner = users.find(u => u.uuid === m.target_user_id);
                     const tags = safeParseTags(m.ai_tags);
+                    const isExpanded = expandedMedId === m.uuid;
 
                     return (
                       <div 
                         key={m.uuid}
-                        // ★変更: タップで詳細モーダルを開く
-                        onClick={() => setSelectedMed(m)}
                         style={{
-                          background: "white", padding: "12px 16px", borderRadius: 12,
-                          boxShadow: "0 1px 3px rgba(0,0,0,0.05)", cursor: "pointer",
-                          display: "flex", justifyContent: "space-between", alignItems: "center"
+                          background: "white", borderRadius: 12,
+                          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                          overflow: "hidden", // 角丸を維持
+                          border: isExpanded ? "2px solid #66A9D9" : "1px solid transparent" // 選択時強調
                         }}
                       >
-                        <div>
-                            <div style={{ fontWeight: "bold", fontSize: 16, color: "#333", marginBottom: 4 }}>
-                                {m.name}
+                        {/* --- クリックで開閉するヘッダー部分 --- */}
+                        <div
+                            onClick={() => toggleDetail(m.uuid)}
+                            style={{
+                                padding: "12px 16px", cursor: "pointer",
+                                display: "flex", justifyContent: "space-between", alignItems: "center"
+                            }}
+                        >
+                            <div>
+                                <div style={{ fontWeight: "bold", fontSize: 16, color: "#333", marginBottom: 4 }}>
+                                    {m.name}
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                                    {owner && (
+                                        <span style={{ fontSize: 10, background: "#f3f4f6", color: "#666", padding: "2px 6px", borderRadius: 4 }}>
+                                            {owner.name}
+                                        </span>
+                                    )}
+                                    {tags.slice(0, 3).map((t, i) => (
+                                        <span key={i} style={{ fontSize: 10, background: "#e0f2fe", color: "#0369a1", padding: "2px 6px", borderRadius: 4 }}>
+                                            {t}
+                                        </span>
+                                    ))}
+                                </div>
                             </div>
-                            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                                {owner && (
-                                    <span style={{ fontSize: 10, background: "#f3f4f6", color: "#666", padding: "2px 6px", borderRadius: 4 }}>
-                                        {owner.name}
-                                    </span>
-                                )}
-                                {tags.slice(0, 3).map((t, i) => (
-                                    <span key={i} style={{ fontSize: 10, background: "#e0f2fe", color: "#0369a1", padding: "2px 6px", borderRadius: 4 }}>
-                                        {t}
-                                    </span>
-                                ))}
+                            <div style={{ color: "#ccc", fontSize: 18, transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
+                                ›
                             </div>
                         </div>
-                        <div style={{ color: "#ccc", fontSize: 18 }}>›</div>
+
+                        {/* --- アコーディオン詳細部分 (モーダルの中身をここに移植) --- */}
+                        {isExpanded && (
+                            <div style={{ 
+                                padding: "0 16px 16px 16px", 
+                                borderTop: "1px solid #eee", 
+                                background: "#fafafa",
+                                // ★重要: テキスト見切れ防止スタイル
+                                wordBreak: "break-all",
+                                whiteSpace: "pre-wrap"
+                            }}>
+                                {/* タグ全表示 */}
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12, marginBottom: 12 }}>
+                                    {owner && (
+                                        <span style={{ fontSize: 11, background: "#f3f4f6", color: "#666", padding: "3px 8px", borderRadius: 4 }}>
+                                            {owner.name}
+                                        </span>
+                                    )}
+                                    {tags.map((t, i) => (
+                                        <span key={i} style={{ fontSize: 11, background: "#e0f2fe", color: "#0369a1", padding: "3px 8px", borderRadius: 4 }}>
+                                            {t}
+                                        </span>
+                                    ))}
+                                </div>
+
+                                {/* スケジュール詳細 */}
+                                <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, marginBottom: 12, border: "1px solid #eee" }}>
+                                    <div style={{ fontWeight: "bold", marginBottom: 4, color: "#555" }}>⏰ 飲むタイミング</div>
+                                    {(() => {
+                                        const s = safeParseSchedule(m.schedule);
+                                        if (s?.type === 'interval') {
+                                            return <div>{s.interval_hours}時間おき (1日{s.max_times}回まで)</div>;
+                                        } else {
+                                            const times = [
+                                                s?.morning > 0 && "朝",
+                                                s?.lunch > 0 && "昼",
+                                                s?.evening > 0 && "夕",
+                                                s?.bedtime > 0 && "寝る前"
+                                            ].filter(Boolean);
+                                            return <div>{times.length > 0 ? times.join(" ・ ") : "指定なし"}</div>;
+                                        }
+                                    })()}
+                                </div>
+
+                                {/* 医師コメント */}
+                                {m.doctor_comment && (
+                                    <div style={{ background: "#fffbeb", padding: 12, borderRadius: 8, fontSize: 14, color: "#92400e", lineHeight: 1.5, marginBottom: 12 }}>
+                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>👨‍⚕️ 医師・薬剤師より</div>
+                                        {m.doctor_comment}
+                                    </div>
+                                )}
+
+                                {/* AI解説 */}
+                                {m.ai_description && (
+                                    <div style={{ fontSize: 14, color: "#4b5563", lineHeight: 1.6, background: "white", padding: 12, borderRadius: 8, border: "1px solid #eee" }}>
+                                        <div style={{ fontWeight: "bold", marginBottom: 4, color: "#333" }}>🤖 AI解説</div>
+                                        {m.ai_description}
+                                        <div style={{ textAlign: "right", marginTop: 8, fontSize: 10, color: "#ccc" }}>
+                                            Powered by {modelName}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 編集ボタン */}
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation(); // アコーディオン開閉を防止
+                                        nav(`/medication-book/edit/${m.uuid}`);
+                                    }}
+                                    style={{
+                                        width: "100%", padding: 14, background: "#111827", color: "white",
+                                        borderRadius: 12, border: "none", fontWeight: "bold", fontSize: 15,
+                                        cursor: "pointer", marginTop: 16
+                                    }}
+                                >
+                                    ✎ 情報を編集する
+                                </button>
+                            </div>
+                        )}
                       </div>
                     );
                   })}
@@ -238,111 +334,6 @@ export default function MedicationBookPage() {
             ))}
         </nav>
       </div>
-
-      {/* ★追加: 詳細表示モーダル */}
-      {selectedMed && (
-        <div 
-            style={{
-                position: "fixed", top: 0, left: 0, width: "100%", height: "100%",
-                background: "rgba(0,0,0,0.5)", zIndex: 100,
-                display: "flex", justifyContent: "center", alignItems: "center", padding: 20
-            }}
-            onClick={closeDetail}
-        >
-            <div 
-                style={{
-                    background: "white", width: "100%", maxWidth: 400, maxHeight: "85vh",
-                    borderRadius: 20, padding: 24, position: "relative",
-                    overflowY: "auto", display: "flex", flexDirection: "column", gap: 16,
-                    boxShadow: "0 10px 25px rgba(0,0,0,0.2)"
-                }}
-                onClick={e => e.stopPropagation()} // 中身クリックで閉じない
-            >
-                {/* 閉じるボタン */}
-                <button 
-                    onClick={closeDetail}
-                    style={{
-                        position: "absolute", top: 16, right: 16,
-                        background: "#f3f4f6", border: "none", width: 32, height: 32,
-                        borderRadius: "50%", fontSize: 18, color: "#666", cursor: "pointer"
-                    }}
-                >
-                    ×
-                </button>
-
-                <div>
-                    <h2 style={{ margin: "0 0 8px 0", fontSize: 20, color: "#333" }}>{selectedMed.name}</h2>
-                    {/* タグ全表示 */}
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {users.find(u => u.uuid === selectedMed.target_user_id) && (
-                            <span style={{ fontSize: 11, background: "#f3f4f6", color: "#666", padding: "3px 8px", borderRadius: 4 }}>
-                                {users.find(u => u.uuid === selectedMed.target_user_id)?.name}
-                            </span>
-                        )}
-                        {safeParseTags(selectedMed.ai_tags).map((t, i) => (
-                            <span key={i} style={{ fontSize: 11, background: "#e0f2fe", color: "#0369a1", padding: "3px 8px", borderRadius: 4 }}>
-                                {t}
-                            </span>
-                        ))}
-                    </div>
-                </div>
-
-                {/* スケジュール詳細 */}
-                <div style={{ background: "#f9fafb", padding: 12, borderRadius: 12, fontSize: 14 }}>
-                    <div style={{ fontWeight: "bold", marginBottom: 4, color: "#555" }}>⏰ 飲むタイミング</div>
-                    {(() => {
-                        const s = safeParseSchedule(selectedMed.schedule);
-                        if (s?.type === 'interval') {
-                            return <div>{s.interval_hours}時間おき (1日{s.max_times}回まで)</div>;
-                        } else {
-                            const times = [
-                                s?.morning > 0 && "朝",
-                                s?.lunch > 0 && "昼",
-                                s?.evening > 0 && "夕",
-                                s?.bedtime > 0 && "寝る前"
-                            ].filter(Boolean);
-                            return <div>{times.length > 0 ? times.join(" ・ ") : "指定なし"}</div>;
-                        }
-                    })()}
-                </div>
-
-                {/* 医師コメント */}
-                {selectedMed.doctor_comment && (
-                    <div style={{ background: "#fffbeb", padding: 12, borderRadius: 12, fontSize: 14, color: "#92400e", lineHeight: 1.5 }}>
-                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>👨‍⚕️ 医師・薬剤師より</div>
-                        {selectedMed.doctor_comment}
-                    </div>
-                )}
-
-                {/* AI解説（ここにもPowered byを表示） */}
-                {selectedMed.ai_description && (
-                    <div style={{ fontSize: 14, color: "#4b5563", lineHeight: 1.6, borderTop: "1px solid #eee", paddingTop: 12 }}>
-                        <div style={{ fontWeight: "bold", marginBottom: 4, color: "#333" }}>🤖 AI解説</div>
-                        {selectedMed.ai_description}
-                        
-                        {/* ★追加: AIモデル名 */}
-                        <div style={{ textAlign: "right", marginTop: 8, fontSize: 10, color: "#ccc" }}>
-                            Powered by {modelName}
-                        </div>
-                    </div>
-                )}
-
-                <div style={{ flex: 1 }} />
-
-                {/* 編集ボタン */}
-                <button
-                    onClick={() => nav(`/medication-book/edit/${selectedMed.uuid}`)}
-                    style={{
-                        width: "100%", padding: 14, background: "#111827", color: "white",
-                        borderRadius: 12, border: "none", fontWeight: "bold", fontSize: 15,
-                        cursor: "pointer", marginTop: 8
-                    }}
-                >
-                    ✎ 情報を編集する
-                </button>
-            </div>
-        </div>
-      )}
 
       <button 
         onClick={() => nav("/medication-book/new")}
