@@ -1,7 +1,8 @@
-﻿import { useState } from "react";
+﻿import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { ApiClient } from "../../data/remote/apiClient";
+import { LocalDb } from "../../data/local/localDb"; // ★追加
 
 export default function AiSupportPage() {
   const nav = useNavigate();
@@ -11,6 +12,22 @@ export default function AiSupportPage() {
   const [aiResponse, setAiResponse] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  
+  // ★追加: 使用モデル名の表示用
+  const [modelName, setModelName] = useState("");
+
+  // ★追加: 設定からAIモデル名を判定して取得
+  useEffect(() => {
+    LocalDb.getAiSettings().then(s => {
+      if (s?.geminiApiKey) {
+        setModelName(s.geminiModel || "Gemini 1.5 Flash");
+      } else if (s?.groqApiKey) {
+        setModelName((s.groqModel || "Llama 3") + " (via Groq)");
+      } else {
+        setModelName("AI Model");
+      }
+    });
+  }, []);
 
   // メニュー項目の定義
   const MENU_ITEMS = [
@@ -37,7 +54,6 @@ export default function AiSupportPage() {
       desc: "飲み合わせ・解説・記録", 
       emoji: "💊", 
       action: () => nav("/medication-book")
-      // highlight: true を削除して青枠廃止
     },
   ];
 
@@ -89,7 +105,7 @@ export default function AiSupportPage() {
             onClick={item.action}
             style={{
               background: "white",
-              border: "1px solid #ddd", // 青枠条件を削除し統一
+              border: "1px solid #ddd",
               borderRadius: 16,
               padding: "24px 16px",
               display: "flex",
@@ -149,6 +165,11 @@ export default function AiSupportPage() {
                 }}>
                   {aiResponse}
                 </ReactMarkdown>
+              </div>
+              
+              {/* ★追加: AIモデル名の表示 */}
+              <div style={{ textAlign: "right", marginTop: 12, fontSize: 11, color: "#bbb", fontFamily: "sans-serif" }}>
+                Powered by {modelName}
               </div>
             </div>
           )}
