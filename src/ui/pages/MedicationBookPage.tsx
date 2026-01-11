@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+﻿import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import type { User, Medication } from "../../utils/types";
@@ -23,7 +23,7 @@ function getIndexChar(yomi: string): string {
   return "他";
 }
 
-// データパース用ヘルパー
+// データパース用ヘルパー: タグ
 function safeParseTags(input: any): string[] {
     try {
         if (Array.isArray(input)) return input;
@@ -40,12 +40,45 @@ function safeParseTags(input: any): string[] {
     return [];
 }
 
+// データパース用ヘルパー: スケジュール
 function safeParseSchedule(input: any): any {
     try {
         if (typeof input === "object") return input;
         if (typeof input === "string") return JSON.parse(input);
     } catch { return {}; }
     return {};
+}
+
+// ★追加: データパース用ヘルパー: 飲み合わせ・AI判定 (編集画面から移植)
+function parseCustomFormat(input: any): { status: string, message: string } | null {
+  if (!input) return null;
+  if (typeof input === "object") return input; 
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    try { return JSON.parse(trimmed); } catch {}
+    
+    // 特殊フォーマット {status=..., message=...} の解析
+    if (trimmed.startsWith("{") && trimmed.includes("message=")) {
+      let status = "none";
+      let message = trimmed;
+      if (trimmed.includes("status=danger")) status = "danger";
+      else if (trimmed.includes("status=warning")) status = "warning";
+      else if (trimmed.includes("status=safe")) status = "safe";
+      
+      const msgStart = trimmed.indexOf("message=");
+      if (msgStart !== -1) {
+        let cleanMsg = trimmed.slice(msgStart + 8);
+        if (cleanMsg.endsWith("}")) cleanMsg = cleanMsg.slice(0, -1);
+        const statusIdx = cleanMsg.lastIndexOf(", status=");
+        if (statusIdx !== -1) cleanMsg = cleanMsg.substring(0, statusIdx);
+        message = cleanMsg.trim();
+      }
+      return { status, message };
+    }
+    // 単純な文字列の場合
+    return { status: "none", message: trimmed };
+  }
+  return null;
 }
 
 export default function MedicationBookPage() {
@@ -192,6 +225,9 @@ export default function MedicationBookPage() {
                     const tags = safeParseTags(m.ai_tags);
                     const isExpanded = expandedMedId === m.uuid;
                     
+                    // ★修正: 単数形 ai_interaction を取得しパースする
+                    const interaction = parseCustomFormat(m.ai_interaction);
+                    
                     return (
                       <div 
                         key={m.uuid}
@@ -225,6 +261,12 @@ export default function MedicationBookPage() {
                                             {t}
                                         </span>
                                     ))}
+                                    {/* ヘッダーにも危険信号があれば表示 */}
+                                    {interaction && interaction.status === 'danger' && (
+                                        <span style={{ fontSize: 10, background: "#fee2e2", color: "#b91c1c", padding: "2px 6px", borderRadius: 4, fontWeight: "bold" }}>
+                                            ⚠️ 注意
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                             <div style={{ color: "#ccc", fontSize: 18, transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.2s", marginLeft: 8 }}>
@@ -242,31 +284,65 @@ export default function MedicationBookPage() {
                                 whiteSpace: "pre-wrap"
                             }}>
                                 {/* 1. AI判定結果（飲み合わせ/注意） */}
-                                {m.ai_interactions && (
-                                    <div style={{ background: "#fee2e2", color: "#b91c1c", padding: "12px", borderRadius: 8, fontSize: 14, marginBottom: 16, border: "1px solid #fecaca" }}>
-                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>⚠️ 判定結果 (飲み合わせ・注意点)</div>
-                                        {m.ai_interactions}
+                                {interaction && interaction.message && (
+                                    <div style={{ 
+                                        background: interaction.status === 'danger' ? "#fee2e2" : interaction.status === 'warning' ? "#fef9c3" : "#dcfce7", 
+                                        color: interaction.status === 'danger' ? "#b91c1c" : interaction.status === 'warning' ? "#854d0e" : "#166534", 
+                                        padding: "12px", borderRadius: 8, fontSize: 14, marginBottom: 16, 
+                                        border: `1px solid ${interaction.status === 'danger' ? "#fecaca" : interaction.status === 'warning' ? "#fde047" : "#bbf7d0"}`
+                                    }}>
+                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>
+                                            {interaction.status === 'danger' ? "⚠️ 併用注意・警告" : interaction.status === 'safe' ? "✅ 判定結果" : "ℹ️ 判定結果"}
+                                        </div>
+                                        {interaction.message}
                                     </div>
                                 )}
 
-                                {/* 2. 飲み方・タイミング */}
+                                {/* 2. 飲み方・タイミング（詳細表示） */}
                                 <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, marginBottom: 12, border: "1px solid #eee" }}>
                                     <div style={{ fontWeight: "bold", marginBottom: 4, color: "#555" }}>⏰ 飲むタイミング</div>
                                     {(() => {
                                         const s = safeParseSchedule(m.schedule);
-                                        // JSONスケジュールがIntervalタイプ、もしくは default_interval_hours がある場合
+                                        const intervalHours = Number(s?.interval_hours || m.default_interval_hours || 0);
+                                        const maxTimes = Number(s?.max_times || 0);
+                                        const reminderMin = Number(s?.reminder_minutes || 0);
+
+                                        // 間隔モード
                                         if (s?.type === 'interval' || (m.default_interval_hours && m.default_interval_hours > 0)) {
-                                            const hours = s?.interval_hours || m.default_interval_hours;
-                                            return <div>{hours}時間おき (1日{s?.max_times || "?"}回まで)</div>;
-                                        } else {
-                                            // 固定時間設定の確認
+                                            return (
+                                                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                                    <div>⏱️ <b>{intervalHours > 0 ? intervalHours : "?"}時間</b>おき (1日{maxTimes > 0 ? maxTimes : "?"}回まで)</div>
+                                                    {reminderMin > 0 && (
+                                                        <div style={{ fontSize: 12, color: "#666" }}>🔔 通知: {reminderMin / 60}時間後</div>
+                                                    )}
+                                                </div>
+                                            );
+                                        } 
+                                        // 固定時間モード (デフォルト)
+                                        else {
                                             const times = [
-                                                s?.morning && "朝",
-                                                s?.lunch && "昼",
-                                                s?.evening && "夕",
-                                                s?.bedtime && "寝る前"
+                                                (Number(s?.wakeup) > 0) && "起床時",
+                                                (Number(s?.morning) > 0) && "朝",
+                                                (Number(s?.lunch) > 0) && "昼",
+                                                (Number(s?.evening) > 0) && "夕",
+                                                (Number(s?.bedtime) > 0) && "寝る前"
                                             ].filter(Boolean);
-                                            return <div>{times.length > 0 ? times.join(" ・ ") : "指定なし (医師の指示に従ってください)"}</div>;
+                                            
+                                            return (
+                                                <div>
+                                                    {times.length > 0 ? (
+                                                        <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+                                                            {times.map((t:any) => (
+                                                                <span key={t} style={{background:"#f3f4f6", padding:"2px 8px", borderRadius:4, fontSize:13}}>{t}</span>
+                                                            ))}
+                                                        </div>
+                                                    ) : "指定なし (医師の指示に従ってください)"}
+                                                    
+                                                    {reminderMin > 0 && (
+                                                        <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>🔔 通知あり</div>
+                                                    )}
+                                                </div>
+                                            );
                                         }
                                     })()}
                                 </div>
@@ -283,7 +359,11 @@ export default function MedicationBookPage() {
                                 {(m.memo_taste || m.taste_rating) && (
                                     <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, color: "#4b5563", marginBottom: 12, border: "1px solid #eee" }}>
                                         <div style={{ fontWeight: "bold", marginBottom: 4 }}>📝 親メモ (味・飲ませ方)</div>
-                                        {m.taste_rating && <div style={{fontSize: 12, color: "#666", marginBottom: 4}}>評価: {m.taste_rating}</div>}
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                            {m.taste_rating === 'good' && <span style={{fontSize:18, color:"#0369a1"}}>◎</span>}
+                                            {m.taste_rating === 'normal' && <span style={{fontSize:18, color:"#666"}}>○</span>}
+                                            {m.taste_rating === 'bad' && <span style={{fontSize:18, color:"#991b1b"}}>△</span>}
+                                        </div>
                                         {m.memo_taste}
                                     </div>
                                 )}
