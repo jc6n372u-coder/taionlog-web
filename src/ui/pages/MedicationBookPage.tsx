@@ -49,7 +49,7 @@ function safeParseSchedule(input: any): any {
     return {};
 }
 
-// ★追加: データパース用ヘルパー: 飲み合わせ・AI判定 (編集画面から移植)
+// データパース用ヘルパー: 飲み合わせ・AI判定
 function parseCustomFormat(input: any): { status: string, message: string } | null {
   if (!input) return null;
   if (typeof input === "object") return input; 
@@ -224,8 +224,6 @@ export default function MedicationBookPage() {
                     const owner = users.find(u => u.uuid === m.target_user_id);
                     const tags = safeParseTags(m.ai_tags);
                     const isExpanded = expandedMedId === m.uuid;
-                    
-                    // ★修正: 単数形 ai_interaction を取得しパースする
                     const interaction = parseCustomFormat(m.ai_interaction);
                     
                     return (
@@ -261,7 +259,20 @@ export default function MedicationBookPage() {
                                             {t}
                                         </span>
                                     ))}
-                                    {/* ヘッダーにも危険信号があれば表示 */}
+                                    
+                                    {/* ★追加: メモがあることを示すアイコン */}
+                                    {m.doctor_comment && (
+                                        <span style={{ fontSize: 10, color: "#92400e", background:"#fffbeb", padding: "2px 4px", borderRadius: 4 }} title="医師メモあり">
+                                            👨‍⚕️
+                                        </span>
+                                    )}
+                                    {(m.memo_taste || m.taste_rating) && (
+                                        <span style={{ fontSize: 10, color: "#4b5563", background:"#f3f4f6", padding: "2px 4px", borderRadius: 4 }} title="親メモあり">
+                                            📝
+                                        </span>
+                                    )}
+
+                                    {/* 危険信号 */}
                                     {interaction && interaction.status === 'danger' && (
                                         <span style={{ fontSize: 10, background: "#fee2e2", color: "#b91c1c", padding: "2px 6px", borderRadius: 4, fontWeight: "bold" }}>
                                             ⚠️ 注意
@@ -283,7 +294,7 @@ export default function MedicationBookPage() {
                                 wordBreak: "break-all",
                                 whiteSpace: "pre-wrap"
                             }}>
-                                {/* 1. AI判定結果（飲み合わせ/注意） */}
+                                {/* 1. AI判定結果 */}
                                 {interaction && interaction.message && (
                                     <div style={{ 
                                         background: interaction.status === 'danger' ? "#fee2e2" : interaction.status === 'warning' ? "#fef9c3" : "#dcfce7", 
@@ -298,7 +309,7 @@ export default function MedicationBookPage() {
                                     </div>
                                 )}
 
-                                {/* 2. 飲み方・タイミング（詳細表示） */}
+                                {/* 2. 飲み方・タイミング */}
                                 <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, marginBottom: 12, border: "1px solid #eee" }}>
                                     <div style={{ fontWeight: "bold", marginBottom: 4, color: "#555" }}>⏰ 飲むタイミング</div>
                                     {(() => {
@@ -307,7 +318,6 @@ export default function MedicationBookPage() {
                                         const maxTimes = Number(s?.max_times || 0);
                                         const reminderMin = Number(s?.reminder_minutes || 0);
 
-                                        // 間隔モード
                                         if (s?.type === 'interval' || (m.default_interval_hours && m.default_interval_hours > 0)) {
                                             return (
                                                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -317,9 +327,7 @@ export default function MedicationBookPage() {
                                                     )}
                                                 </div>
                                             );
-                                        } 
-                                        // 固定時間モード (デフォルト)
-                                        else {
+                                        } else {
                                             const times = [
                                                 (Number(s?.wakeup) > 0) && "起床時",
                                                 (Number(s?.morning) > 0) && "朝",
@@ -347,7 +355,7 @@ export default function MedicationBookPage() {
                                     })()}
                                 </div>
 
-                                {/* 3. 医師・薬剤師メモ */}
+                                {/* 3. 医師・薬剤師メモ (必須) */}
                                 {m.doctor_comment && (
                                     <div style={{ background: "#fffbeb", padding: 12, borderRadius: 8, fontSize: 14, color: "#92400e", lineHeight: 1.5, marginBottom: 12, border: "1px solid #fef3c7" }}>
                                         <div style={{ fontWeight: "bold", marginBottom: 4 }}>👨‍⚕️ 医師・薬剤師メモ</div>
@@ -355,7 +363,7 @@ export default function MedicationBookPage() {
                                     </div>
                                 )}
 
-                                {/* 4. 親メモ（味・飲ませ方） */}
+                                {/* 4. 親メモ（味・飲ませ方）(必須) */}
                                 {(m.memo_taste || m.taste_rating) && (
                                     <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, color: "#4b5563", marginBottom: 12, border: "1px solid #eee" }}>
                                         <div style={{ fontWeight: "bold", marginBottom: 4 }}>📝 親メモ (味・飲ませ方)</div>

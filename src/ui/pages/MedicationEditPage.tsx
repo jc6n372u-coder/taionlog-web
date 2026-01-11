@@ -1,61 +1,16 @@
-﻿import { useEffect, useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+﻿import { useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
+import { ApiClient } from "../../data/remote/apiClient";
 import type { User, Medication } from "../../utils/types";
 
-// 五十音インデックス用
-const INDEX_CHARS = ["あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ", "他"];
-
-// ヨミガナからインデックス文字を判定する
-function getIndexChar(yomi: string): string {
-  if (!yomi) return "他";
-  const first = yomi.charAt(0);
-  if (/[あ-お]/.test(first)) return "あ";
-  if (/[か-こが-ご]/.test(first)) return "か";
-  if (/[さ-そざ-ぞ]/.test(first)) return "さ";
-  if (/[た-とだ-ど]/.test(first)) return "た";
-  if (/[な-の]/.test(first)) return "な";
-  if (/[は-ほば-ぼぱ-ぽ]/.test(first)) return "は";
-  if (/[ま-も]/.test(first)) return "ま";
-  if (/[や-よ]/.test(first)) return "や";
-  if (/[ら-ろ]/.test(first)) return "ら";
-  if (/[わ-ん]/.test(first)) return "わ";
-  return "他";
-}
-
-// データパース用ヘルパー: タグ
-function safeParseTags(input: any): string[] {
-    try {
-        if (Array.isArray(input)) return input;
-        if (typeof input === "string") {
-            const trimmed = input.trim();
-            if (!trimmed) return [];
-            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-                const parsed = JSON.parse(trimmed);
-                return Array.isArray(parsed) ? parsed : [trimmed];
-            }
-            return [trimmed];
-        }
-    } catch { return []; }
-    return [];
-}
-
-// データパース用ヘルパー: スケジュール
-function safeParseSchedule(input: any): any {
-    try {
-        if (typeof input === "object") return input;
-        if (typeof input === "string") return JSON.parse(input);
-    } catch { return {}; }
-    return {};
-}
-
-// データパース用ヘルパー: 飲み合わせ・AI判定
-function parseCustomFormat(input: any): { status: string, message: string } | null {
+// 飲み合わせデータなどの独自形式パース
+function parseCustomFormat(input: any): any {
   if (!input) return null;
-  if (typeof input === "object") return input; 
+  if (typeof input === "object") return input;
   if (typeof input === "string") {
     const trimmed = input.trim();
-    try { return JSON.parse(trimmed); } catch {}
+    try { return JSON.parse(trimmed); } catch { }
     
     // 特殊フォーマット {status=..., message=...} の解析
     if (trimmed.startsWith("{") && trimmed.includes("message=")) {
@@ -64,7 +19,7 @@ function parseCustomFormat(input: any): { status: string, message: string } | nu
       if (trimmed.includes("status=danger")) status = "danger";
       else if (trimmed.includes("status=warning")) status = "warning";
       else if (trimmed.includes("status=safe")) status = "safe";
-      
+
       const msgStart = trimmed.indexOf("message=");
       if (msgStart !== -1) {
         let cleanMsg = trimmed.slice(msgStart + 8);
@@ -75,26 +30,37 @@ function parseCustomFormat(input: any): { status: string, message: string } | nu
       }
       return { status, message };
     }
-    // 単純な文字列の場合
-    return { status: "none", message: trimmed };
   }
   return null;
 }
 
-export default function MedicationBookPage() {
+export default function MedicationEditPage() {
   const nav = useNavigate();
+  const { id } = useParams();
+
   const [users, setUsers] = useState<User[]>([]);
-  const [medications, setMedications] = useState<Medication[]>([]);
-  const [activeTab, setActiveTab] = useState<string>("ALL");
-  
-  // 展開中のアイテムID
-  const [expandedMedId, setExpandedMedId] = useState<string | null>(null);
+  const [allMeds, setAllMeds] = useState<Medication[]>([]);
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [isOpenDetails, setIsOpenDetails] = useState(false);
 
-  // AIモデル名表示用
-  const [modelName, setModelName] = useState("");
+  // 各エリアの拡大状態
+  const [isDescExpanded, setIsDescExpanded] = useState(false);
+  const [isDoctorExpanded, setIsDoctorExpanded] = useState(false);
+  const [isMemoExpanded, setIsMemoExpanded] = useState(false);
 
-  // スクロール制御用Ref
-  const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // フォームデータ
+  const [formData, setFormData] = useState<Partial<Medication>>({
+    name: "",
+    yomi: "",
+    show_in_input: 1, // デフォルトON
+    schedule: {
+      type: 'fixed', // デフォルトは固定
+      wakeup: 0, morning: 0, lunch: 0, evening: 0, bedtime: 0,
+      interval_hours: 8, max_times: 3, reminder_minutes: 0
+    },
+    ai_tags: [],
+    taste_rating: "normal"
+  });
 
   useEffect(() => {
     LocalDb.getCurrentGroup().then(async (g) => {
@@ -102,351 +68,446 @@ export default function MedicationBookPage() {
       const us = await LocalDb.listUsers(g.group_id);
       setUsers(us);
       const meds = await LocalDb.getMedications(g.group_id);
-      setMedications(meds);
+      setAllMeds(meds);
 
-      // AI設定の読み込み
-      const s = await LocalDb.getAiSettings();
-      if (s?.geminiApiKey) {
-        setModelName(s.geminiModel || "Gemini 1.5 Flash");
-      } else if (s?.groqApiKey) {
-        setModelName((s.groqModel || "Llama 3") + " (via Groq)");
-      } else {
-        setModelName("AI Model");
+      if (id) {
+        const target = meds.find(m => m.uuid === id);
+        if (target) {
+          const loadedData = JSON.parse(JSON.stringify(target));
+
+          // 各種データパース
+          try {
+            const rawTags = loadedData.ai_tags as any;
+            if (typeof rawTags === "string") {
+              const trimmed = rawTags.trim();
+              if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                loadedData.ai_tags = JSON.parse(trimmed);
+              } else {
+                loadedData.ai_tags = trimmed ? [trimmed] : [];
+              }
+            } else if (!Array.isArray(rawTags)) {
+              loadedData.ai_tags = [];
+            }
+          } catch { loadedData.ai_tags = []; }
+
+          // AI判定データのパース (単数形 ai_interaction)
+          loadedData.ai_interaction = parseCustomFormat(loadedData.ai_interaction);
+
+          // スケジュールパースと初期値補完
+          if (loadedData.schedule && typeof loadedData.schedule === "string") {
+            try { loadedData.schedule = JSON.parse(loadedData.schedule); }
+            catch { loadedData.schedule = {}; }
+          }
+          if (!loadedData.schedule) loadedData.schedule = {};
+          if (!loadedData.schedule.type) loadedData.schedule.type = 'fixed';
+
+          // 未定義項目の初期化
+          if (loadedData.show_in_input === undefined) loadedData.show_in_input = 1;
+
+          setFormData(loadedData);
+          setIsOpenDetails(true);
+        }
       }
     });
-  }, []);
+  }, [id]);
 
-  // フィルタリング
-  const filteredMeds = medications.filter(m => {
-    if (activeTab === "ALL") return true;
-    return !m.target_user_id || m.target_user_id === activeTab;
-  });
+  const handleAskAi = async () => {
+    if (!formData.name) return alert("先にお薬の名前を入力してください");
+    const currentMeds = allMeds
+      .filter(m => m.uuid !== id && m.target_user_id === formData.target_user_id)
+      .map(m => m.name);
 
-  // グルーピング処理
-  const groupedMeds = filteredMeds.reduce((acc, med) => {
-    // 正しいカラム名 yomi を使用
-    const m = med as any; 
-    const idx = getIndexChar(m.yomi || m.name);
-    if (!acc[idx]) acc[idx] = [];
-    acc[idx].push(med);
-    return acc;
-  }, {} as Record<string, Medication[]>);
+    setIsAiLoading(true);
+    try {
+      const result = await ApiClient.fetchMedicationGuidance({
+        targetMedName: formData.name,
+        currentMedNames: currentMeds
+      });
 
-  // インデックスジャンプ
-  const scrollToSection = (char: string) => {
-    const el = sectionRefs.current[char];
-    if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (result) {
+        const safeInteraction = parseCustomFormat(result.interaction);
+        setFormData(prev => ({
+          ...prev,
+          ai_description: result.description,
+          ai_side_effects: result.side_effects,
+          ai_tags: result.tags,
+          ai_interaction: safeInteraction
+        }));
+        alert("AI情報を更新しました！(解説欄をご確認ください)");
+        setIsDescExpanded(true);
+      } else {
+        alert("AI情報の取得に失敗しました。API設定を確認してください。");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("エラーが発生しました。通信環境やAPI設定を確認してください。");
+    } finally {
+      setIsAiLoading(false);
     }
   };
 
-  // アコーディオン開閉
-  const toggleDetail = (uuid: string) => {
-    if (expandedMedId === uuid) {
-      setExpandedMedId(null);
-    } else {
-      setExpandedMedId(uuid);
+  const handleSave = async () => {
+    if (!formData.name) return alert("お薬の名前は必須です");
+    const g = await LocalDb.getCurrentGroup();
+    if (!g) return;
+    const now = new Date().toISOString();
+
+    // DB保存用に整形
+    const newMed: Medication = {
+      uuid: id || crypto.randomUUID(),
+      group_id: g.group_id,
+      name: formData.name!,
+      yomi: formData.yomi || formData.name!,
+      target_user_id: formData.target_user_id,
+
+      doctor_comment: formData.doctor_comment,
+      show_in_input: formData.show_in_input,
+
+      ai_tags: formData.ai_tags,
+      ai_description: formData.ai_description,
+      ai_side_effects: formData.ai_side_effects,
+      ai_interaction: formData.ai_interaction,
+
+      schedule: formData.schedule,
+      memo_taste: formData.memo_taste,
+      taste_rating: formData.taste_rating,
+
+      display_order: 0,
+      is_deleted: 0,
+      updated_at: now,
+      created_at: id ? undefined : now
+    };
+
+    if (id) {
+      const original = allMeds.find(m => m.uuid === id);
+      if (original) newMed.created_at = original.created_at;
     }
+
+    await LocalDb.upsertMedication(newMed);
+    nav(-1);
+  };
+
+  const handleDelete = async () => {
+    if (id && confirm("このお薬を削除しますか？")) {
+      await LocalDb.deleteMedication(id);
+      nav(-1);
+    }
+  };
+
+  // スケジュール設定用ヘルパー
+  const updateSchedule = (key: string, val: any) => {
+    setFormData(prev => ({
+      ...prev,
+      schedule: { ...prev.schedule, [key]: val }
+    }));
   };
 
   return (
-    <div style={{ minHeight: "100dvh", background: "#f4f5f7", paddingBottom: 80, display: "flex", flexDirection: "column" }}>
-      {/* ヘッダー */}
-      <header style={{ height: 56, background: "#66A9D9", color: "white", display: "flex", alignItems: "center", padding: "0 16px", flexShrink: 0 }}>
-        <button onClick={() => nav("/")} style={{ background: "none", border: "none", color: "white", fontSize: 20, cursor: "pointer" }}>←</button>
-        <span style={{ marginLeft: 16, fontWeight: "bold" }}>お薬手帳</span>
+    <div style={{ minHeight: "100dvh", background: "#f4f5f7", paddingBottom: 100 }}>
+      <header style={{ height: 56, background: "#66A9D9", color: "white", display: "flex", alignItems: "center", padding: "0 16px" }}>
+        <button onClick={() => nav(-1)} style={{ background: "none", border: "none", color: "white", fontSize: 20 }}>←</button>
+        <span style={{ marginLeft: 16, fontWeight: "bold" }}>{id ? "お薬の編集" : "お薬の登録"}</span>
+        {id && <button onClick={handleDelete} style={{ marginLeft: "auto", background: "none", border: "none", color: "white" }}>🗑️</button>}
       </header>
 
-      {/* ユーザータブ */}
-      <div style={{ display: "flex", overflowX: "auto", background: "white", borderBottom: "1px solid #eee", padding: "0 8px", flexShrink: 0 }}>
+      <main style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* 基本情報 */}
+        <div style={styles.card}>
+          <label style={styles.label}>お薬の名前 (必須)</label>
+          <input
+            value={formData.name}
+            onChange={e => setFormData({ ...formData, name: e.target.value })}
+            placeholder="例: カロナール細粒"
+            style={styles.input}
+          />
+
+          <div style={{ height: 16 }}></div>
+
+          <label style={styles.label}>よみがな (並び替え用)</label>
+          <input
+            value={formData.yomi || ""}
+            onChange={e => setFormData({ ...formData, yomi: e.target.value })}
+            placeholder="例: かろなーる"
+            style={styles.input}
+          />
+        </div>
+
         <button
-          onClick={() => setActiveTab("ALL")}
-          style={{
-            padding: "12px 16px", background: "none", border: "none",
-            borderBottom: activeTab === "ALL" ? "3px solid #66A9D9" : "3px solid transparent",
-            fontWeight: activeTab === "ALL" ? "bold" : "normal",
-            color: activeTab === "ALL" ? "#66A9D9" : "#666",
-            cursor: "pointer", whiteSpace: "nowrap"
-          }}
+          onClick={() => setIsOpenDetails(!isOpenDetails)}
+          style={{ ...styles.card, textAlign: "center", fontWeight: "bold", color: "#666", display: "flex", justifyContent: "center", alignItems: "center", gap: 8 }}
         >
-          全員
+          {isOpenDetails ? "▲ 詳細設定を閉じる" : "▼ 詳細設定を開く"}
         </button>
-        {users.map(u => (
-          <button
-            key={u.uuid}
-            onClick={() => setActiveTab(u.uuid)}
-            style={{
-              padding: "12px 16px", background: "none", border: "none",
-              borderBottom: activeTab === u.uuid ? "3px solid #66A9D9" : "3px solid transparent",
-              fontWeight: activeTab === u.uuid ? "bold" : "normal",
-              color: activeTab === u.uuid ? "#66A9D9" : "#666",
-              cursor: "pointer", whiteSpace: "nowrap"
-            }}
-          >
-            {u.name}
-          </button>
-        ))}
-      </div>
 
-      <div style={{ display: "flex", flex: 1, position: "relative", overflow: "hidden" }}>
-        {/* メインリストエリア */}
-        <main style={{ flex: 1, overflowY: "auto", padding: "16px 36px 80px 16px" }}> 
-          {filteredMeds.length === 0 && (
-            <div style={{ textAlign: "center", color: "#999", marginTop: 40 }}>
-              お薬が登録されていません。<br />
-              右下のボタンから追加してください。
+        {isOpenDetails && (
+          <>
+            {/* 所有者 */}
+            <div style={styles.card}>
+              <label style={styles.label}>誰のお薬？</label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {users.map(u => (
+                  <button
+                    key={u.uuid}
+                    onClick={() => setFormData({ ...formData, target_user_id: u.uuid })}
+                    style={{
+                      padding: "8px 16px", borderRadius: 20, border: "1px solid #66A9D9",
+                      background: formData.target_user_id === u.uuid ? "#66A9D9" : "white",
+                      color: formData.target_user_id === u.uuid ? "white" : "#66A9D9",
+                    }}
+                  >
+                    {u.name}
+                  </button>
+                ))}
+              </div>
             </div>
-          )}
 
-          {INDEX_CHARS.map(char => {
-            const group = groupedMeds[char];
-            if (!group || group.length === 0) return null;
+            {/* 飲み方・タイミング */}
+            <div style={styles.card}>
+              <label style={styles.label}>飲み方・タイミング</label>
 
-            return (
-              <div 
-                key={char} 
-                ref={(el) => { sectionRefs.current[char] = el; }} 
-                style={{ marginBottom: 24 }}
-              >
-                <div style={{ 
-                    fontSize: 14, fontWeight: "bold", color: "#66A9D9", 
-                    background: "#e0f2fe", padding: "4px 8px", borderRadius: 4, 
-                    display: "inline-block", marginBottom: 8 
-                }}>
-                    {char}行
-                </div>
-                
-                <div style={{ display: "grid", gap: 8 }}>
-                  {group.map(med => {
-                    // 正式なフィールドにアクセスするためキャスト
-                    const m = med as any;
+              <div style={{ display: "flex", background: "#eee", borderRadius: 8, padding: 4, marginBottom: 16 }}>
+                <button
+                  onClick={() => updateSchedule('type', 'fixed')}
+                  style={{
+                    flex: 1, padding: 8, borderRadius: 6, border: "none", fontWeight: "bold",
+                    background: formData.schedule?.type === 'fixed' ? "white" : "transparent",
+                    color: formData.schedule?.type === 'fixed' ? "#66A9D9" : "#999",
+                    boxShadow: formData.schedule?.type === 'fixed' ? "0 1px 2px rgba(0,0,0,0.1)" : "none"
+                  }}
+                >
+                  決まった時間
+                </button>
+                <button
+                  onClick={() => updateSchedule('type', 'interval')}
+                  style={{
+                    flex: 1, padding: 8, borderRadius: 6, border: "none", fontWeight: "bold",
+                    background: formData.schedule?.type === 'interval' ? "white" : "transparent",
+                    color: formData.schedule?.type === 'interval' ? "#66A9D9" : "#999",
+                    boxShadow: formData.schedule?.type === 'interval' ? "0 1px 2px rgba(0,0,0,0.1)" : "none"
+                  }}
+                >
+                  時間間隔
+                </button>
+              </div>
 
-                    const owner = users.find(u => u.uuid === m.target_user_id);
-                    const tags = safeParseTags(m.ai_tags);
-                    const isExpanded = expandedMedId === m.uuid;
-                    const interaction = parseCustomFormat(m.ai_interaction);
-                    
+              {formData.schedule?.type === 'fixed' ? (
+                /* 固定時間モード */
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, textAlign: "center" }}>
+                  {["起床", "朝", "昼", "夕", "就寝"].map((label, i) => {
+                    const keys = ["wakeup", "morning", "lunch", "evening", "bedtime"] as const;
+                    const key = keys[i];
                     return (
-                      <div 
-                        key={m.uuid}
-                        style={{
-                          background: "white", borderRadius: 12,
-                          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-                          overflow: "hidden", 
-                          border: isExpanded ? "2px solid #66A9D9" : "1px solid transparent" 
-                        }}
-                      >
-                        {/* --- クリックで開閉するヘッダー部分 --- */}
-                        <div
-                            onClick={() => toggleDetail(m.uuid)}
-                            style={{
-                                padding: "12px 16px", cursor: "pointer",
-                                display: "flex", justifyContent: "space-between", alignItems: "center"
-                            }}
-                        >
-                            <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: "bold", fontSize: 16, color: "#333", marginBottom: 4 }}>
-                                    {m.name}
-                                </div>
-                                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                                    {owner && (
-                                        <span style={{ fontSize: 10, background: "#f3f4f6", color: "#666", padding: "2px 6px", borderRadius: 4 }}>
-                                            {owner.name}
-                                        </span>
-                                    )}
-                                    {tags.slice(0, 3).map((t: string, i: number) => (
-                                        <span key={i} style={{ fontSize: 10, background: "#e0f2fe", color: "#0369a1", padding: "2px 6px", borderRadius: 4 }}>
-                                            {t}
-                                        </span>
-                                    ))}
-                                    
-                                    {/* ★追加: メモがあることを示すアイコン */}
-                                    {m.doctor_comment && (
-                                        <span style={{ fontSize: 10, color: "#92400e", background:"#fffbeb", padding: "2px 4px", borderRadius: 4 }} title="医師メモあり">
-                                            👨‍⚕️
-                                        </span>
-                                    )}
-                                    {(m.memo_taste || m.taste_rating) && (
-                                        <span style={{ fontSize: 10, color: "#4b5563", background:"#f3f4f6", padding: "2px 4px", borderRadius: 4 }} title="親メモあり">
-                                            📝
-                                        </span>
-                                    )}
-
-                                    {/* 危険信号 */}
-                                    {interaction && interaction.status === 'danger' && (
-                                        <span style={{ fontSize: 10, background: "#fee2e2", color: "#b91c1c", padding: "2px 6px", borderRadius: 4, fontWeight: "bold" }}>
-                                            ⚠️ 注意
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                            <div style={{ color: "#ccc", fontSize: 18, transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.2s", marginLeft: 8 }}>
-                                ›
-                            </div>
-                        </div>
-
-                        {/* --- アコーディオン詳細部分 --- */}
-                        {isExpanded && (
-                            <div style={{ 
-                                padding: "16px", 
-                                borderTop: "1px solid #eee", 
-                                background: "#fafafa",
-                                wordBreak: "break-all",
-                                whiteSpace: "pre-wrap"
-                            }}>
-                                {/* 1. AI判定結果 */}
-                                {interaction && interaction.message && (
-                                    <div style={{ 
-                                        background: interaction.status === 'danger' ? "#fee2e2" : interaction.status === 'warning' ? "#fef9c3" : "#dcfce7", 
-                                        color: interaction.status === 'danger' ? "#b91c1c" : interaction.status === 'warning' ? "#854d0e" : "#166534", 
-                                        padding: "12px", borderRadius: 8, fontSize: 14, marginBottom: 16, 
-                                        border: `1px solid ${interaction.status === 'danger' ? "#fecaca" : interaction.status === 'warning' ? "#fde047" : "#bbf7d0"}`
-                                    }}>
-                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>
-                                            {interaction.status === 'danger' ? "⚠️ 併用注意・警告" : interaction.status === 'safe' ? "✅ 判定結果" : "ℹ️ 判定結果"}
-                                        </div>
-                                        {interaction.message}
-                                    </div>
-                                )}
-
-                                {/* 2. 飲み方・タイミング */}
-                                <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, marginBottom: 12, border: "1px solid #eee" }}>
-                                    <div style={{ fontWeight: "bold", marginBottom: 4, color: "#555" }}>⏰ 飲むタイミング</div>
-                                    {(() => {
-                                        const s = safeParseSchedule(m.schedule);
-                                        const intervalHours = Number(s?.interval_hours || m.default_interval_hours || 0);
-                                        const maxTimes = Number(s?.max_times || 0);
-                                        const reminderMin = Number(s?.reminder_minutes || 0);
-
-                                        if (s?.type === 'interval' || (m.default_interval_hours && m.default_interval_hours > 0)) {
-                                            return (
-                                                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                                    <div>⏱️ <b>{intervalHours > 0 ? intervalHours : "?"}時間</b>おき (1日{maxTimes > 0 ? maxTimes : "?"}回まで)</div>
-                                                    {reminderMin > 0 && (
-                                                        <div style={{ fontSize: 12, color: "#666" }}>🔔 通知: {reminderMin / 60}時間後</div>
-                                                    )}
-                                                </div>
-                                            );
-                                        } else {
-                                            const times = [
-                                                (Number(s?.wakeup) > 0) && "起床時",
-                                                (Number(s?.morning) > 0) && "朝",
-                                                (Number(s?.lunch) > 0) && "昼",
-                                                (Number(s?.evening) > 0) && "夕",
-                                                (Number(s?.bedtime) > 0) && "寝る前"
-                                            ].filter(Boolean);
-                                            
-                                            return (
-                                                <div>
-                                                    {times.length > 0 ? (
-                                                        <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
-                                                            {times.map((t:any) => (
-                                                                <span key={t} style={{background:"#f3f4f6", padding:"2px 8px", borderRadius:4, fontSize:13}}>{t}</span>
-                                                            ))}
-                                                        </div>
-                                                    ) : "指定なし (医師の指示に従ってください)"}
-                                                    
-                                                    {reminderMin > 0 && (
-                                                        <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>🔔 通知あり</div>
-                                                    )}
-                                                </div>
-                                            );
-                                        }
-                                    })()}
-                                </div>
-
-                                {/* 3. 医師・薬剤師メモ (必須) */}
-                                {m.doctor_comment && (
-                                    <div style={{ background: "#fffbeb", padding: 12, borderRadius: 8, fontSize: 14, color: "#92400e", lineHeight: 1.5, marginBottom: 12, border: "1px solid #fef3c7" }}>
-                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>👨‍⚕️ 医師・薬剤師メモ</div>
-                                        {m.doctor_comment}
-                                    </div>
-                                )}
-
-                                {/* 4. 親メモ（味・飲ませ方）(必須) */}
-                                {(m.memo_taste || m.taste_rating) && (
-                                    <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, color: "#4b5563", marginBottom: 12, border: "1px solid #eee" }}>
-                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>📝 親メモ (味・飲ませ方)</div>
-                                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                                            {m.taste_rating === 'good' && <span style={{fontSize:18, color:"#0369a1"}}>◎</span>}
-                                            {m.taste_rating === 'normal' && <span style={{fontSize:18, color:"#666"}}>○</span>}
-                                            {m.taste_rating === 'bad' && <span style={{fontSize:18, color:"#991b1b"}}>△</span>}
-                                        </div>
-                                        {m.memo_taste}
-                                    </div>
-                                )}
-
-                                {/* 5. AI解説 */}
-                                {m.ai_description && (
-                                    <div style={{ fontSize: 14, color: "#4b5563", lineHeight: 1.6, background: "white", padding: 12, borderRadius: 8, border: "1px solid #eee" }}>
-                                        <div style={{ fontWeight: "bold", marginBottom: 4, color: "#333" }}>🤖 AI解説</div>
-                                        {m.ai_description}
-                                        <div style={{ textAlign: "right", marginTop: 8, fontSize: 10, color: "#ccc" }}>
-                                            Powered by {modelName}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 編集ボタン */}
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation(); 
-                                        nav(`/medication-book/edit/${m.uuid}`);
-                                    }}
-                                    style={{
-                                        width: "100%", padding: 14, background: "#111827", color: "white",
-                                        borderRadius: 12, border: "none", fontWeight: "bold", fontSize: 15,
-                                        cursor: "pointer", marginTop: 16
-                                    }}
-                                >
-                                    ✎ 情報を編集する
-                                </button>
-                            </div>
-                        )}
+                      <div key={key}>
+                        <div style={{ fontSize: 10, marginBottom: 4 }}>{label}</div>
+                        <input
+                          type="number" step="0.5"
+                          value={formData.schedule?.[key] || ""}
+                          onChange={e => updateSchedule(key, parseFloat(e.target.value) || 0)}
+                          style={{ width: "100%", padding: 4, textAlign: "center", border: "1px solid #ddd", borderRadius: 4 }}
+                        />
                       </div>
-                    );
+                    )
                   })}
                 </div>
-              </div>
-            );
-          })}
-        </main>
+              ) : (
+                /* 時間間隔モード */
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 14 }}>間隔:</span>
+                    <input
+                      type="number"
+                      value={formData.schedule?.interval_hours || ""}
+                      onChange={e => updateSchedule('interval_hours', parseFloat(e.target.value))}
+                      style={{ ...styles.input, width: 80, textAlign: "center" }}
+                    />
+                    <span style={{ fontSize: 14 }}>時間おき</span>
+                  </div>
 
-        {/* 右端インデックスバー */}
-        <nav style={{ 
-            width: 24, background: "rgba(255,255,255,0.9)", 
-            display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",
-            boxShadow: "-1px 0 3px rgba(0,0,0,0.05)", zIndex: 10
-        }}>
-            {INDEX_CHARS.map(char => (
-                <div 
-                    key={char}
-                    onClick={() => scrollToSection(char)}
-                    style={{ 
-                        flex: 1, width: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 11, color: "#66A9D9", fontWeight: "bold", cursor: "pointer"
-                    }}
-                >
-                    {char}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 14 }}>上限:</span>
+                    <input
+                      type="number"
+                      value={formData.schedule?.max_times || ""}
+                      onChange={e => updateSchedule('max_times', parseFloat(e.target.value))}
+                      style={{ ...styles.input, width: 80, textAlign: "center" }}
+                    />
+                    <span style={{ fontSize: 14 }}>回まで / 日</span>
+                  </div>
+
+                  <div style={{ marginTop: 8, padding: 12, background: "#f0f9ff", borderRadius: 8 }}>
+                    <label style={{ ...styles.label, marginBottom: 4 }}>🔔 リマインダー初期値</label>
+                    <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
+                      記録時に自動で通知時間をセットします。<br />
+                      0にすると自動セットされません。
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="number"
+                        // 分単位で保存されているが、入力は「時間」で行う
+                        value={formData.schedule?.reminder_minutes ? formData.schedule.reminder_minutes / 60 : (formData.schedule?.interval_hours || 0)}
+                        onChange={e => updateSchedule('reminder_minutes', (parseFloat(e.target.value) || 0) * 60)}
+                        style={{ ...styles.input, width: 80, textAlign: "center" }}
+                      />
+                      <span style={{ fontSize: 14 }}>時間後</span>
+                    </div>
+                  </div>
                 </div>
-            ))}
-        </nav>
-      </div>
+              )}
+            </div>
 
-      <button 
-        onClick={() => nav("/medication-book/new")}
-        style={{ 
-          position: "fixed", right: 20, bottom: 20, 
-          width: 56, height: 56, borderRadius: 28, 
-          background: "#111827", color: "white", 
-          border: "none", fontSize: 24, fontWeight: "bold", 
-          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-          zIndex: 20
-        }}
-      >
-        ＋
-      </button>
+            {/* AIサポート */}
+            <div style={{ ...styles.card, border: "2px solid #e0f2fe" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontWeight: "bold", color: "#0369a1" }}>🤖 AIサポート</span>
+                <button
+                  onClick={handleAskAi}
+                  disabled={isAiLoading}
+                  style={{ background: "#0369a1", color: "white", border: "none", padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer" }}
+                >
+                  {isAiLoading ? "解析中..." : "解説・タグを更新"}
+                </button>
+              </div>
+
+              {/* API設定へのリンク */}
+              <div style={{ textAlign: "right", marginBottom: 12 }}>
+                <span
+                  onClick={() => nav("/settings/ai")}
+                  style={{ fontSize: 11, color: "#0369a1", textDecoration: "underline", cursor: "pointer" }}
+                >
+                  (i) APIキーの設定・取得はこちら
+                </span>
+              </div>
+
+              {formData.ai_interaction && formData.ai_interaction.status && formData.ai_interaction.status !== 'none' && (
+                <div style={{
+                  background: formData.ai_interaction.status === 'danger' ? '#fecaca' : formData.ai_interaction.status === 'warning' ? '#fef08a' : '#d1fae5',
+                  color: formData.ai_interaction.status === 'danger' ? '#7f1d1d' : formData.ai_interaction.status === 'warning' ? '#713f12' : '#064e3b',
+                  padding: 12, borderRadius: 8, marginBottom: 12, fontSize: 13, lineHeight: "1.5"
+                }}>
+                  <strong>飲み合わせ判定:</strong><br />
+                  {formData.ai_interaction.message}
+                </div>
+              )}
+
+              <label style={styles.label}>解説 (AI) - タップで拡大</label>
+              <textarea
+                value={formData.ai_description || ""}
+                onChange={e => setFormData({ ...formData, ai_description: e.target.value })}
+                onClick={() => setIsDescExpanded(!isDescExpanded)}
+                style={{
+                  ...styles.textarea,
+                  minHeight: isDescExpanded ? 200 : 60,
+                  transition: "min-height 0.3s ease",
+                  cursor: "pointer"
+                }}
+                placeholder="AIボタンを押すと自動入力されます"
+              />
+
+              <label style={styles.label}>用途タグ</label>
+              <input
+                value={Array.isArray(formData.ai_tags) ? formData.ai_tags.join(", ") : ""}
+                onChange={e => setFormData({ ...formData, ai_tags: e.target.value.split(",").map(t => t.trim()) })}
+                style={styles.input}
+                placeholder="カンマ区切り (例: 発熱, 咳)"
+              />
+            </div>
+
+            {/* 医師・薬剤師コメント */}
+            <div style={styles.card}>
+              <label style={styles.label}>医師・薬剤師コメント - タップで拡大</label>
+              <textarea
+                value={formData.doctor_comment || ""}
+                onChange={e => setFormData({ ...formData, doctor_comment: e.target.value })}
+                onClick={() => setIsDoctorExpanded(!isDoctorExpanded)}
+                style={{
+                  ...styles.textarea,
+                  minHeight: isDoctorExpanded ? 200 : 60,
+                  transition: "min-height 0.3s ease",
+                  cursor: "pointer"
+                }}
+                placeholder="例: 食後に飲む、熱が下がっても飲みきること 等"
+              />
+            </div>
+
+            {/* 親メモ */}
+            <div style={styles.card}>
+              <label style={styles.label}>親メモ (味・飲ませ方) - タップで拡大</label>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                {["good:◎", "normal:○", "bad:△"].map(opt => {
+                  const [val, icon] = opt.split(":");
+                  return (
+                    <button key={val}
+                      onClick={() => setFormData({ ...formData, taste_rating: val as any })}
+                      style={{
+                        flex: 1, padding: 8, borderRadius: 8, border: "1px solid #ddd",
+                        background: formData.taste_rating === val ? "#e0f2fe" : "white",
+                        fontSize: 18, fontWeight: "bold",
+                        color: formData.taste_rating === val ? "#0369a1" : "#666"
+                      }}
+                    >
+                      {icon}
+                    </button>
+                  )
+                })}
+              </div>
+              <textarea
+                value={formData.memo_taste || ""}
+                onChange={e => setFormData({ ...formData, memo_taste: e.target.value })}
+                onClick={() => setIsMemoExpanded(!isMemoExpanded)}
+                style={{
+                  ...styles.textarea,
+                  minHeight: isMemoExpanded ? 200 : 60,
+                  transition: "min-height 0.3s ease",
+                  cursor: "pointer"
+                }}
+                placeholder="例: チョコアイスなら食べた"
+              />
+            </div>
+
+            {/* 表示設定 */}
+            <div style={styles.card}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: "bold", fontSize: 14 }}>記録メニューに表示する</div>
+                  <div style={{ fontSize: 11, color: "#999" }}>OFFにすると記録時の選択肢から隠せます</div>
+                </div>
+                <div
+                  onClick={() => setFormData({ ...formData, show_in_input: formData.show_in_input === 1 ? 0 : 1 })}
+                  style={{
+                    width: 50, height: 30, borderRadius: 15, position: "relative", cursor: "pointer",
+                    background: formData.show_in_input === 1 ? "#66A9D9" : "#ccc",
+                    transition: "background 0.3s"
+                  }}
+                >
+                  <div style={{
+                    width: 26, height: 26, borderRadius: 13, background: "white", position: "absolute", top: 2,
+                    left: formData.show_in_input === 1 ? 22 : 2,
+                    transition: "left 0.3s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)"
+                  }} />
+                </div>
+              </div>
+            </div>
+
+          </>
+        )}
+      </main>
+
+      <div style={{
+        position: "fixed", bottom: 0, left: 0, right: 0,
+        padding: 16, background: "white", borderTop: "1px solid #eee", boxSizing: "border-box"
+      }}>
+        <button onClick={handleSave} style={{ width: "100%", padding: 16, background: "#111827", color: "white", borderRadius: 12, border: "none", fontWeight: "bold", fontSize: 16 }}>
+          保 存
+        </button>
+      </div>
     </div>
   );
 }
+
+const styles: Record<string, React.CSSProperties> = {
+  card: { background: "white", padding: 16, borderRadius: 12, border: "1px solid #ddd" },
+  label: { display: "block", fontSize: 12, color: "#666", marginBottom: 6, fontWeight: "bold" },
+  input: { width: "100%", padding: 12, borderRadius: 8, border: "1px solid #ddd", fontSize: 16, boxSizing: "border-box" },
+  textarea: { width: "100%", padding: 12, borderRadius: 8, border: "1px solid #ddd", fontSize: 14, minHeight: 60, boxSizing: "border-box", fontFamily: "inherit" }
+};
