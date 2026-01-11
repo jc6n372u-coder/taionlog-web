@@ -85,8 +85,11 @@ export default function MedicationBookPage() {
   const nav = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [medications, setMedications] = useState<Medication[]>([]);
-  const [activeTab, setActiveTab] = useState<string>("ALL");
   
+  // フィルター用ステート
+  const [activeTab, setActiveTab] = useState<string>("ALL"); // ユーザー
+  const [activeTag, setActiveTag] = useState<string | null>(null); // ★追加: タグ
+
   // 展開中のアイテムID
   const [expandedMedId, setExpandedMedId] = useState<string | null>(null);
 
@@ -116,10 +119,21 @@ export default function MedicationBookPage() {
     });
   }, []);
 
+  // ★追加: 登録されている全タグを抽出して一覧化（重複排除・ソート）
+  const allTags = Array.from(new Set(
+    medications.flatMap(m => safeParseTags(m.ai_tags))
+  )).sort();
+
   // フィルタリング
   const filteredMeds = medications.filter(m => {
-    if (activeTab === "ALL") return true;
-    return !m.target_user_id || m.target_user_id === activeTab;
+    // 1. ユーザーで絞り込み
+    const userMatch = activeTab === "ALL" || !m.target_user_id || m.target_user_id === activeTab;
+    
+    // 2. ★追加: タグで絞り込み
+    const medTags = safeParseTags(m.ai_tags);
+    const tagMatch = !activeTag || medTags.includes(activeTag);
+
+    return userMatch && tagMatch;
   });
 
   // グルーピング処理
@@ -188,13 +202,62 @@ export default function MedicationBookPage() {
         ))}
       </div>
 
+      {/* ★追加: タグフィルター (タグが存在する場合のみ表示) */}
+      {allTags.length > 0 && (
+        <div style={{ 
+          display: "flex", overflowX: "auto", gap: 8, padding: "12px 16px", 
+          background: "#f9fafb", borderBottom: "1px solid #eee", flexShrink: 0,
+          alignItems: "center"
+        }}>
+           <div style={{ fontSize: 12, color: "#666", fontWeight: "bold", flexShrink: 0 }}>絞り込み:</div>
+           {/* 選択解除ボタン */}
+           <button
+             onClick={() => setActiveTag(null)}
+             style={{
+               padding: "6px 12px", borderRadius: 16, border: "1px solid", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap",
+               background: activeTag === null ? "#66A9D9" : "white",
+               color: activeTag === null ? "white" : "#666",
+               borderColor: activeTag === null ? "#66A9D9" : "#ddd"
+             }}
+           >
+             すべて
+           </button>
+           
+           {/* 各タグボタン */}
+           {allTags.map(tag => (
+             <button
+               key={tag}
+               onClick={() => setActiveTag(tag === activeTag ? null : tag)} // 同じタグをタップしたら解除
+               style={{
+                 padding: "6px 12px", borderRadius: 16, border: "1px solid", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap",
+                 background: activeTag === tag ? "#e0f2fe" : "white",
+                 color: activeTag === tag ? "#0369a1" : "#666",
+                 borderColor: activeTag === tag ? "#0369a1" : "#ddd",
+                 fontWeight: activeTag === tag ? "bold" : "normal"
+               }}
+             >
+               {tag}
+             </button>
+           ))}
+        </div>
+      )}
+
       <div style={{ display: "flex", flex: 1, position: "relative", overflow: "hidden" }}>
         {/* メインリストエリア */}
         <main style={{ flex: 1, overflowY: "auto", padding: "16px 36px 80px 16px" }}> 
           {filteredMeds.length === 0 && (
             <div style={{ textAlign: "center", color: "#999", marginTop: 40 }}>
-              お薬が登録されていません。<br />
-              右下のボタンから追加してください。
+              {activeTag ? (
+                <>
+                  該当するお薬が見つかりません。<br/>
+                  条件を変更してください。
+                </>
+              ) : (
+                <>
+                  お薬が登録されていません。<br />
+                  右下のボタンから追加してください。
+                </>
+              )}
             </div>
           )}
 
@@ -260,7 +323,7 @@ export default function MedicationBookPage() {
                                         </span>
                                     ))}
                                     
-                                    {/* ★追加: メモがあることを示すアイコン */}
+                                    {/* メモがあることを示すアイコン */}
                                     {m.doctor_comment && (
                                         <span style={{ fontSize: 10, color: "#92400e", background:"#fffbeb", padding: "2px 4px", borderRadius: 4 }} title="医師メモあり">
                                             👨‍⚕️
@@ -294,7 +357,7 @@ export default function MedicationBookPage() {
                                 wordBreak: "break-all",
                                 whiteSpace: "pre-wrap"
                             }}>
-                                {/* 1. AI判定結果 */}
+                                {/* 1. AI判定結果 (存在する場合のみ) */}
                                 {interaction && interaction.message && (
                                     <div style={{ 
                                         background: interaction.status === 'danger' ? "#fee2e2" : interaction.status === 'warning' ? "#fef9c3" : "#dcfce7", 
@@ -309,7 +372,7 @@ export default function MedicationBookPage() {
                                     </div>
                                 )}
 
-                                {/* 2. 飲み方・タイミング */}
+                                {/* 2. 飲み方・タイミング (常に表示) */}
                                 <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, marginBottom: 12, border: "1px solid #eee" }}>
                                     <div style={{ fontWeight: "bold", marginBottom: 4, color: "#555" }}>⏰ 飲むタイミング</div>
                                     {(() => {
@@ -355,28 +418,24 @@ export default function MedicationBookPage() {
                                     })()}
                                 </div>
 
-                                {/* 3. 医師・薬剤師メモ (必須) */}
-                                {m.doctor_comment && (
-                                    <div style={{ background: "#fffbeb", padding: 12, borderRadius: 8, fontSize: 14, color: "#92400e", lineHeight: 1.5, marginBottom: 12, border: "1px solid #fef3c7" }}>
-                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>👨‍⚕️ 医師・薬剤師メモ</div>
-                                        {m.doctor_comment}
-                                    </div>
-                                )}
+                                {/* 3. 医師・薬剤師メモ (常に表示) */}
+                                <div style={{ background: "#fffbeb", padding: 12, borderRadius: 8, fontSize: 14, color: "#92400e", lineHeight: 1.5, marginBottom: 12, border: "1px solid #fef3c7" }}>
+                                    <div style={{ fontWeight: "bold", marginBottom: 4 }}>👨‍⚕️ 医師・薬剤師メモ</div>
+                                    {m.doctor_comment ? m.doctor_comment : <span style={{opacity: 0.6}}>（記載なし）</span>}
+                                </div>
 
-                                {/* 4. 親メモ（味・飲ませ方）(必須) */}
-                                {(m.memo_taste || m.taste_rating) && (
-                                    <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, color: "#4b5563", marginBottom: 12, border: "1px solid #eee" }}>
-                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>📝 親メモ (味・飲ませ方)</div>
-                                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                                            {m.taste_rating === 'good' && <span style={{fontSize:18, color:"#0369a1"}}>◎</span>}
-                                            {m.taste_rating === 'normal' && <span style={{fontSize:18, color:"#666"}}>○</span>}
-                                            {m.taste_rating === 'bad' && <span style={{fontSize:18, color:"#991b1b"}}>△</span>}
-                                        </div>
-                                        {m.memo_taste}
+                                {/* 4. 親メモ（味・飲ませ方）(常に表示) */}
+                                <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, color: "#4b5563", marginBottom: 12, border: "1px solid #eee" }}>
+                                    <div style={{ fontWeight: "bold", marginBottom: 4 }}>📝 親メモ (味・飲ませ方)</div>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                        {m.taste_rating === 'good' && <span style={{fontSize:18, color:"#0369a1"}}>◎</span>}
+                                        {m.taste_rating === 'normal' && <span style={{fontSize:18, color:"#666"}}>○</span>}
+                                        {m.taste_rating === 'bad' && <span style={{fontSize:18, color:"#991b1b"}}>△</span>}
                                     </div>
-                                )}
+                                    {(m.memo_taste) ? m.memo_taste : <span style={{opacity: 0.6}}>（記載なし）</span>}
+                                </div>
 
-                                {/* 5. AI解説 */}
+                                {/* 5. AI解説 (存在する場合のみ) */}
                                 {m.ai_description && (
                                     <div style={{ fontSize: 14, color: "#4b5563", lineHeight: 1.6, background: "white", padding: 12, borderRadius: 8, border: "1px solid #eee" }}>
                                         <div style={{ fontWeight: "bold", marginBottom: 4, color: "#333" }}>🤖 AI解説</div>
