@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import type { User, Medication } from "../../utils/types";
@@ -241,15 +241,15 @@ export default function MedicationBookPage() {
                                 wordBreak: "break-all",
                                 whiteSpace: "pre-wrap"
                             }}>
-                                {/* ★AI医師判定（飲み合わせ/注意）: ai_interactions */}
+                                {/* 1. AI判定結果（飲み合わせ/注意） */}
                                 {m.ai_interactions && (
                                     <div style={{ background: "#fee2e2", color: "#b91c1c", padding: "12px", borderRadius: 8, fontSize: 14, marginBottom: 16, border: "1px solid #fecaca" }}>
-                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>⚠️ 飲み合わせ・AI判定</div>
+                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>⚠️ 判定結果 (飲み合わせ・注意点)</div>
                                         {m.ai_interactions}
                                     </div>
                                 )}
 
-                                {/* ★飲み方・タイミング: schedule / default_interval_hours */}
+                                {/* 2. 飲み方・タイミング */}
                                 <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, marginBottom: 12, border: "1px solid #eee" }}>
                                     <div style={{ fontWeight: "bold", marginBottom: 4, color: "#555" }}>⏰ 飲むタイミング</div>
                                     {(() => {
@@ -271,15 +271,15 @@ export default function MedicationBookPage() {
                                     })()}
                                 </div>
 
-                                {/* ★医師・薬剤師コメント: doctor_comment */}
+                                {/* 3. 医師・薬剤師メモ */}
                                 {m.doctor_comment && (
                                     <div style={{ background: "#fffbeb", padding: 12, borderRadius: 8, fontSize: 14, color: "#92400e", lineHeight: 1.5, marginBottom: 12, border: "1px solid #fef3c7" }}>
-                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>👨‍⚕️ 医師・薬剤師より</div>
+                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>👨‍⚕️ 医師・薬剤師メモ</div>
                                         {m.doctor_comment}
                                     </div>
                                 )}
 
-                                {/* ★親メモ（味・飲ませ方）: memo_taste, taste_rating */}
+                                {/* 4. 親メモ（味・飲ませ方） */}
                                 {(m.memo_taste || m.taste_rating) && (
                                     <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, color: "#4b5563", marginBottom: 12, border: "1px solid #eee" }}>
                                         <div style={{ fontWeight: "bold", marginBottom: 4 }}>📝 親メモ (味・飲ませ方)</div>
@@ -288,7 +288,7 @@ export default function MedicationBookPage() {
                                     </div>
                                 )}
 
-                                {/* AI解説: ai_description */}
+                                {/* 5. AI解説 */}
                                 {m.ai_description && (
                                     <div style={{ fontSize: 14, color: "#4b5563", lineHeight: 1.6, background: "white", padding: 12, borderRadius: 8, border: "1px solid #eee" }}>
                                         <div style={{ fontWeight: "bold", marginBottom: 4, color: "#333" }}>🤖 AI解説</div>
