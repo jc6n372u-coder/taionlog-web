@@ -54,7 +54,7 @@ export default function MedicationBookPage() {
   const [medications, setMedications] = useState<Medication[]>([]);
   const [activeTab, setActiveTab] = useState<string>("ALL");
   
-  // ★変更: モーダル用stateを削除し、展開中のアイテムIDを管理するstateに変更
+  // 展開中のアイテムID
   const [expandedMedId, setExpandedMedId] = useState<string | null>(null);
 
   // AIモデル名表示用
@@ -91,7 +91,9 @@ export default function MedicationBookPage() {
 
   // グルーピング処理
   const groupedMeds = filteredMeds.reduce((acc, med) => {
-    const idx = getIndexChar(med.yomi || med.name);
+    // 正しいカラム名 yomi を使用
+    const m = med as any; 
+    const idx = getIndexChar(m.yomi || m.name);
     if (!acc[idx]) acc[idx] = [];
     acc[idx].push(med);
     return acc;
@@ -105,12 +107,12 @@ export default function MedicationBookPage() {
     }
   };
 
-  // ★変更: アコーディオンの開閉切り替え
+  // アコーディオン開閉
   const toggleDetail = (uuid: string) => {
     if (expandedMedId === uuid) {
-      setExpandedMedId(null); // 既に開いていれば閉じる
+      setExpandedMedId(null);
     } else {
-      setExpandedMedId(uuid); // 開く
+      setExpandedMedId(uuid);
     }
   };
 
@@ -182,19 +184,22 @@ export default function MedicationBookPage() {
                 </div>
                 
                 <div style={{ display: "grid", gap: 8 }}>
-                  {group.map(m => {
+                  {group.map(med => {
+                    // 正式なフィールドにアクセスするためキャスト
+                    const m = med as any;
+
                     const owner = users.find(u => u.uuid === m.target_user_id);
                     const tags = safeParseTags(m.ai_tags);
                     const isExpanded = expandedMedId === m.uuid;
-
+                    
                     return (
                       <div 
                         key={m.uuid}
                         style={{
                           background: "white", borderRadius: 12,
                           boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-                          overflow: "hidden", // 角丸を維持
-                          border: isExpanded ? "2px solid #66A9D9" : "1px solid transparent" // 選択時強調
+                          overflow: "hidden", 
+                          border: isExpanded ? "2px solid #66A9D9" : "1px solid transparent" 
                         }}
                       >
                         {/* --- クリックで開閉するヘッダー部分 --- */}
@@ -205,7 +210,7 @@ export default function MedicationBookPage() {
                                 display: "flex", justifyContent: "space-between", alignItems: "center"
                             }}
                         >
-                            <div>
+                            <div style={{ flex: 1 }}>
                                 <div style={{ fontWeight: "bold", fontSize: 16, color: "#333", marginBottom: 4 }}>
                                     {m.name}
                                 </div>
@@ -215,70 +220,75 @@ export default function MedicationBookPage() {
                                             {owner.name}
                                         </span>
                                     )}
-                                    {tags.slice(0, 3).map((t, i) => (
+                                    {tags.slice(0, 3).map((t: string, i: number) => (
                                         <span key={i} style={{ fontSize: 10, background: "#e0f2fe", color: "#0369a1", padding: "2px 6px", borderRadius: 4 }}>
                                             {t}
                                         </span>
                                     ))}
                                 </div>
                             </div>
-                            <div style={{ color: "#ccc", fontSize: 18, transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
+                            <div style={{ color: "#ccc", fontSize: 18, transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.2s", marginLeft: 8 }}>
                                 ›
                             </div>
                         </div>
 
-                        {/* --- アコーディオン詳細部分 (モーダルの中身をここに移植) --- */}
+                        {/* --- アコーディオン詳細部分 --- */}
                         {isExpanded && (
                             <div style={{ 
-                                padding: "0 16px 16px 16px", 
+                                padding: "16px", 
                                 borderTop: "1px solid #eee", 
                                 background: "#fafafa",
-                                // ★重要: テキスト見切れ防止スタイル
                                 wordBreak: "break-all",
                                 whiteSpace: "pre-wrap"
                             }}>
-                                {/* タグ全表示 */}
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12, marginBottom: 12 }}>
-                                    {owner && (
-                                        <span style={{ fontSize: 11, background: "#f3f4f6", color: "#666", padding: "3px 8px", borderRadius: 4 }}>
-                                            {owner.name}
-                                        </span>
-                                    )}
-                                    {tags.map((t, i) => (
-                                        <span key={i} style={{ fontSize: 11, background: "#e0f2fe", color: "#0369a1", padding: "3px 8px", borderRadius: 4 }}>
-                                            {t}
-                                        </span>
-                                    ))}
-                                </div>
+                                {/* ★AI医師判定（飲み合わせ/注意）: ai_interactions */}
+                                {m.ai_interactions && (
+                                    <div style={{ background: "#fee2e2", color: "#b91c1c", padding: "12px", borderRadius: 8, fontSize: 14, marginBottom: 16, border: "1px solid #fecaca" }}>
+                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>⚠️ 飲み合わせ・AI判定</div>
+                                        {m.ai_interactions}
+                                    </div>
+                                )}
 
-                                {/* スケジュール詳細 */}
+                                {/* ★飲み方・タイミング: schedule / default_interval_hours */}
                                 <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, marginBottom: 12, border: "1px solid #eee" }}>
                                     <div style={{ fontWeight: "bold", marginBottom: 4, color: "#555" }}>⏰ 飲むタイミング</div>
                                     {(() => {
                                         const s = safeParseSchedule(m.schedule);
-                                        if (s?.type === 'interval') {
-                                            return <div>{s.interval_hours}時間おき (1日{s.max_times}回まで)</div>;
+                                        // JSONスケジュールがIntervalタイプ、もしくは default_interval_hours がある場合
+                                        if (s?.type === 'interval' || (m.default_interval_hours && m.default_interval_hours > 0)) {
+                                            const hours = s?.interval_hours || m.default_interval_hours;
+                                            return <div>{hours}時間おき (1日{s?.max_times || "?"}回まで)</div>;
                                         } else {
+                                            // 固定時間設定の確認
                                             const times = [
-                                                s?.morning > 0 && "朝",
-                                                s?.lunch > 0 && "昼",
-                                                s?.evening > 0 && "夕",
-                                                s?.bedtime > 0 && "寝る前"
+                                                s?.morning && "朝",
+                                                s?.lunch && "昼",
+                                                s?.evening && "夕",
+                                                s?.bedtime && "寝る前"
                                             ].filter(Boolean);
-                                            return <div>{times.length > 0 ? times.join(" ・ ") : "指定なし"}</div>;
+                                            return <div>{times.length > 0 ? times.join(" ・ ") : "指定なし (医師の指示に従ってください)"}</div>;
                                         }
                                     })()}
                                 </div>
 
-                                {/* 医師コメント */}
+                                {/* ★医師・薬剤師コメント: doctor_comment */}
                                 {m.doctor_comment && (
-                                    <div style={{ background: "#fffbeb", padding: 12, borderRadius: 8, fontSize: 14, color: "#92400e", lineHeight: 1.5, marginBottom: 12 }}>
+                                    <div style={{ background: "#fffbeb", padding: 12, borderRadius: 8, fontSize: 14, color: "#92400e", lineHeight: 1.5, marginBottom: 12, border: "1px solid #fef3c7" }}>
                                         <div style={{ fontWeight: "bold", marginBottom: 4 }}>👨‍⚕️ 医師・薬剤師より</div>
                                         {m.doctor_comment}
                                     </div>
                                 )}
 
-                                {/* AI解説 */}
+                                {/* ★親メモ（味・飲ませ方）: memo_taste, taste_rating */}
+                                {(m.memo_taste || m.taste_rating) && (
+                                    <div style={{ background: "white", padding: 12, borderRadius: 8, fontSize: 14, color: "#4b5563", marginBottom: 12, border: "1px solid #eee" }}>
+                                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>📝 親メモ (味・飲ませ方)</div>
+                                        {m.taste_rating && <div style={{fontSize: 12, color: "#666", marginBottom: 4}}>評価: {m.taste_rating}</div>}
+                                        {m.memo_taste}
+                                    </div>
+                                )}
+
+                                {/* AI解説: ai_description */}
                                 {m.ai_description && (
                                     <div style={{ fontSize: 14, color: "#4b5563", lineHeight: 1.6, background: "white", padding: 12, borderRadius: 8, border: "1px solid #eee" }}>
                                         <div style={{ fontWeight: "bold", marginBottom: 4, color: "#333" }}>🤖 AI解説</div>
@@ -292,7 +302,7 @@ export default function MedicationBookPage() {
                                 {/* 編集ボタン */}
                                 <button
                                     onClick={(e) => {
-                                        e.stopPropagation(); // アコーディオン開閉を防止
+                                        e.stopPropagation(); 
                                         nav(`/medication-book/edit/${m.uuid}`);
                                     }}
                                     style={{
