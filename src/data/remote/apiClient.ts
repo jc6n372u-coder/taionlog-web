@@ -106,7 +106,7 @@ export const ApiClient = {
       try {
         console.log("Attempting Gemini...");
         const genAI = new GoogleGenerativeAI(settings.geminiApiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: settings.geminiModel || "gemini-3-flash" });
         const result = await model.generateContent(prompt);
         const text = result.response.text();
         resultJson = parseAiJson(text);
@@ -147,7 +147,7 @@ export const ApiClient = {
     if (settings.geminiApiKey) {
       try {
         const genAI = new GoogleGenerativeAI(settings.geminiApiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
+        const model = genAI.getGenerativeModel({ model: settings.geminiModel || "gemini-3-flash", systemInstruction: systemPrompt });
         const result = await model.generateContent(userPrompt);
         return result.response.text();
       } catch (e) {

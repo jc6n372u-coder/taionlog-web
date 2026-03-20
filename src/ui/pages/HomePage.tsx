@@ -23,6 +23,21 @@ function formatRelativeDate(iso: string) {
   return `${dayDiff}日前`;
 }
 
+// 時刻フォーマッター（HH:MM）
+function formatTime(iso: string) {
+  const d = new Date(iso);
+  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+}
+
+// 「今日」かどうか判定
+function isToday(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() 
+      && d.getMonth() === now.getMonth() 
+      && d.getDate() === now.getDate();
+}
+
 export default function HomePage() {
   const nav = useNavigate();
   const { syncState, runSync } = useSync();
@@ -149,9 +164,14 @@ export default function HomePage() {
                             {rec ? formatDate(rec.measured_at) : "未記録"}
                         </div>
 
-                        {/* 4. 相対日付エリア */}
+                        {/* 4. 相対日付エリア + 今日なら時刻表示 */}
                         <div style={styles.relativeDateCol}>
                             {rec ? formatRelativeDate(rec.measured_at) : ""}
+                            {rec && isToday(rec.measured_at) && (
+                                <div style={{fontSize: 11, color: "#666", marginTop: 1}}>
+                                    {formatTime(rec.measured_at)}
+                                </div>
+                            )}
                         </div>
                     </div>
                 );
