@@ -6,22 +6,56 @@ import type { PushData } from "../../utils/types";
 
 export type SyncResult = { success: true; pushed: number; pulled: number } | { success: false; error: string };
 
+function toUpdatedMs_(v: unknown): number {
+  if (v === null || v === undefined || v === "") return NaN;
+  if (v instanceof Date) return v.getTime();
+  const t = new Date(String(v)).getTime();
+  return Number.isNaN(t) ? NaN : t;
+}
+
 // ★修正: "groups" を追加して、グループ情報の保存を許可
 async function guardedUpsert(store: "users"|"records"|"medications"|"events"|"reminders"|"groups", rows: any[]) {
   const db = await getDb();
   // @ts-ignore dynamic store name
   const tx = db.transaction(store, "readwrite");
+
   for (const r of rows) {
     const cur = await tx.store.get(r.uuid);
+
     if (!cur) {
       await tx.store.put(r);
       continue;
     }
-    // サーバーの更新が新しい場合のみ上書き（LWW）
-    if ((r.updated_at ?? "") > (cur.updated_at ?? "")) {
+
+    const nextUpdatedMs = toUpdatedMs_(r.updated_at);
+    const curUpdatedMs = toUpdatedMs_(cur.updated_at);
+
+    // 両方とも日時として比較可能なら、より新しい方のみ採用
+    if (!Number.isNaN(nextUpdatedMs) && !Number.isNaN(curUpdatedMs)) {
+      if (nextUpdatedMs > curUpdatedMs) {
+        await tx.store.put(r);
+      }
+      continue;
+    }
+
+    // 片方または両方が不正な場合のフォールバック
+    const nextUpdated = String(r.updated_at ?? "");
+    const currentUpdated = String(cur.updated_at ?? "");
+
+    if (!nextUpdated && currentUpdated) {
+      continue;
+    }
+
+    if (nextUpdated && !currentUpdated) {
+      await tx.store.put(r);
+      continue;
+    }
+
+    if (nextUpdated > currentUpdated) {
       await tx.store.put(r);
     }
   }
+
   await tx.done;
 }
 

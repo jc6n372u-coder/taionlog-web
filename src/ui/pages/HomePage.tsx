@@ -33,8 +33,8 @@ function formatTime(iso: string) {
 function isToday(iso: string) {
   const d = new Date(iso);
   const now = new Date();
-  return d.getFullYear() === now.getFullYear() 
-      && d.getMonth() === now.getMonth() 
+  return d.getFullYear() === now.getFullYear()
+      && d.getMonth() === now.getMonth()
       && d.getDate() === now.getDate();
 }
 
@@ -51,7 +51,6 @@ export default function HomePage() {
   const loadData = async () => {
     const g = await LocalDb.getCurrentGroup();
     if (!g) return nav("/onboarding");
-    
     // 設定確保
     const s = await LocalDb.ensureSettings(g.group_id);
     setSettings(s);
@@ -124,24 +123,21 @@ export default function HomePage() {
                 <span>最新の記録</span>
                 <button onClick={() => nav("/chart")} style={styles.linkBtn}>グラフを見る →</button>
             </div>
-            
             {users.length === 0 && (
                 <div style={{padding:20, textAlign:"center", color:"#999"}}>
                     メンバーがいません<br/>設定から追加してください
                 </div>
             )}
-            
             {users.map(u => {
                 const rec = records.find(r => r.user_uuid === u.uuid);
                 const showTemp = settings?.show_temp_on_home ?? true;
-                
                 const isFever = rec && rec.temp >= 37.5;
                 const tempColor = isFever ? "#FF5722" : "#66A9D9";
 
                 let tempStr = "—";
                 if (rec) {
                     if (rec.temp === 0) {
-                          tempStr = "投薬"; 
+                          tempStr = "投薬";
                     } else if (showTemp) {
                           tempStr = `${rec.temp.toFixed(1)}℃`;
                     } else {
