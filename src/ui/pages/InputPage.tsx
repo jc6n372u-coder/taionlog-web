@@ -63,6 +63,14 @@ function getElapsedText(lastIso: string, currentIso: string): string {
     return `${h}時間${m > 0 ? m + "分" : ""}経過`;
 }
 
+/** ローカル時間の "YYYY-MM-DD" を返す（toISOString はUTCなのでズレる） */
+function toLocalDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export default function InputPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -94,7 +102,7 @@ export default function InputPage() {
 
   useEffect(() => {
     const now = new Date();
-    const yyyymmdd = now.toISOString().slice(0, 10);
+    const yyyymmdd = toLocalDateStr(now);
     const hhmm = now.toTimeString().slice(0, 5);
     setDate(yyyymmdd);
     setTime(hhmm);
@@ -127,7 +135,7 @@ export default function InputPage() {
                         setMemo(target.memo || "");
                         
                         const d = new Date(target.measured_at);
-                        setDate(d.toISOString().slice(0, 10));
+                        setDate(toLocalDateStr(d));
                         setTime(d.toTimeString().slice(0, 5));
 
                         const targetTime = target.measured_at;
@@ -152,7 +160,7 @@ export default function InputPage() {
                     if (target) {
                         setMode("meds");
                         const d = new Date(target.occurred_at);
-                        setDate(d.toISOString().slice(0, 10));
+                        setDate(toLocalDateStr(d));
                         setTime(d.toTimeString().slice(0, 5));
                         
                         let currentId = target.payload;

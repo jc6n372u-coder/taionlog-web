@@ -100,7 +100,20 @@ export async function syncNow(): Promise<SyncResult> {
     }
     if (pulled.settings) await LocalDb.upsertSettings(pulled.settings);
     
-    await LocalDb.setMeta("last_sync", new Date().toISOString());
+    // last_sync をpullデータ内の最大 updated_at に基づいて設定（クライアント時計に依存しない）
+    let maxUpdatedAt = lastSync;
+    for (const key of ["users","records","medications","events","reminders","groups"] as const) {
+      const rows = (pulled as any)[key] as any[] | undefined;
+      if (!rows?.length) continue;
+      for (const r of rows) {
+        const u = String(r.updated_at ?? "");
+        if (u && u > maxUpdatedAt) maxUpdatedAt = u;
+      }
+    }
+    if (pulled.settings?.updated_at && pulled.settings.updated_at > maxUpdatedAt) {
+      maxUpdatedAt = pulled.settings.updated_at;
+    }
+    await LocalDb.setMeta("last_sync", maxUpdatedAt);
 
     const pushed = resp.data.pushed ?? {};
     const pushCount = Object.values(pushed).reduce((s, v) => s + (typeof v === "number" ? v : 0), 0);
