@@ -19,7 +19,7 @@ export function getDb() {
     // ★ここを「3」に変更してください！
     // これにより、スマホが「おっ、新しい構造だ！」と気づいて groups テーブルを作成します。
     _db = openDB<MyDB>("taionlog-db", 3, {
-      upgrade(db, oldVersion, newVersion, tx) {
+      upgrade(db, _oldVersion, _newVersion, _tx) {
         if (!db.objectStoreNames.contains("users")) {
            const store = db.createObjectStore("users", { keyPath: "uuid" });
            store.createIndex("by_group", "group_id");

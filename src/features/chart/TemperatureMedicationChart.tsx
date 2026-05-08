@@ -25,19 +25,15 @@ const COLORS = {
 const FEVER_LINE = 37.5;
 
 export default function TemperatureMedicationChart({ temperatures, medications, viewMode }: Props) {
-  
+
   let timeUnit: 'hour' | 'day' | 'month' = 'day';
-  let displayFmt = 'd';
 
   if (viewMode === 'day') {
       timeUnit = 'hour';
-      displayFmt = 'H:mm';
   } else if (viewMode === 'year') {
       timeUnit = 'month';
-      displayFmt = 'M月';
   } else {
       timeUnit = 'day';
-      displayFmt = 'd';
   }
 
   const data: ChartData<'line' | 'scatter'> = {

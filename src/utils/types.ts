@@ -68,7 +68,7 @@ export type Medication = {
   ai_description?: string;
   ai_side_effects?: string;
   ai_interaction?: {
-    status: 'danger' | 'warning' | 'ok' | 'none';
+    status: 'danger' | 'warning' | 'ok' | 'safe' | 'none';
     message: string;
   };
 

@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useState } from "react";
 import { loadDeviceSettings, saveDeviceSettings, type DeviceSettingsV1 } from "../../../app/deviceSettings";
 import { requestBrowserNotificationPermission } from "../../../services/notifications/tier1_push_min";
 
