@@ -1,4 +1,4 @@
-﻿import { defineConfig } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { execSync } from 'child_process'
@@ -11,7 +11,7 @@ const getGitInfo = () => {
     // 最終コミット日時を取得
     const date = execSync('git log -1 --format=%cd --date=format:"%Y/%m/%d %H:%M"').toString().trim()
     return { hash, date }
-  } catch (e) {
+  } catch {
     // Gitがない環境用（現在日時を入れる）
     const now = new Date()
     return { 

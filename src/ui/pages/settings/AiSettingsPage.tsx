@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../../data/local/localDb";
 import { AI_DEFAULTS } from "../../../config/aiDefaults";
 import type { AiSettings } from "../../../utils/types";
+import { showAppAlert, showSnackbar } from "../../feedback/feedbackService";
 
 export default function AiSettingsPage() {
   const nav = useNavigate();
@@ -35,12 +36,13 @@ export default function AiSettingsPage() {
     const geminiKey = settings.geminiApiKey.trim();
     if (geminiKey) {
       if (!geminiKey.startsWith("AIza")) {
-        alert("【Gemini APIキー エラー】\nキーは通常 'AIza' で始まります。");
+        await showAppAlert("Gemini APIキーを確認してください", "キーは通常 'AIza' で始まります。");
         return;
       }
       if (geminiKey.length !== 39) {
-        alert(
-          `【Gemini APIキー エラー】\n桁数が違います(現在${geminiKey.length}文字)。\nコピー漏れを確認してください。`
+        await showAppAlert(
+          "Gemini APIキーを確認してください",
+          `桁数が違います（現在${geminiKey.length}文字）。コピー漏れを確認してください。`,
         );
         return;
       }
@@ -49,13 +51,13 @@ export default function AiSettingsPage() {
     const groqKey = settings.groqApiKey.trim();
     if (groqKey) {
       if (!groqKey.startsWith("gsk_")) {
-        alert("【Groq APIキー エラー】\nキーは通常 'gsk_' で始まります。");
+        await showAppAlert("Groq APIキーを確認してください", "キーは通常 'gsk_' で始まります。");
         return;
       }
     }
 
     await LocalDb.saveAiSettings({ ...settings, geminiApiKey: geminiKey, groqApiKey: groqKey });
-    alert("AI設定を保存しました。");
+    showSnackbar("AI設定を保存しました");
     nav(-1);
   };
 

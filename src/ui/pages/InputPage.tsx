@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
+import { onDataRefreshRequested } from "../../services/sync/syncEvents";
+import { useSafeDraft } from "../../services/drafts/useSafeDraft";
 import type { Medication, EventRow } from "../../utils/types";
 import { extractMedId } from "../../utils/payload";
 import { toLocalDateStr, formatElapsedSince } from "../../utils/dateFormat";
+import { showAppAlert, showAppConfirm, showSnackbar } from "../feedback/feedbackService";
 
 // 症状リスト読み込み失敗時のフォールバック
 const FALLBACK_SYMPTOMS = [
@@ -43,6 +46,16 @@ function getLastTakenTime(
   return targetEvents[0].occurred_at;
 }
 
+type InputDraftPayload = {
+  mode: "temp" | "meds";
+  temp: number;
+  date: string;
+  time: string;
+  memo: string;
+  symptoms: string[];
+  selectedMedicationIds: string[];
+};
+
 export default function InputPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -68,6 +81,11 @@ export default function InputPage() {
   const [loadedMedEvents, setLoadedMedEvents] = useState<EventRow[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [userName, setUserName] = useState("");
+  const [groupId, setGroupId] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [remoteChanged, setRemoteChanged] = useState(false);
+  const [originalRecordUpdatedAt, setOriginalRecordUpdatedAt] = useState<string | null>(null);
+  const [initialDraftPayload, setInitialDraftPayload] = useState<InputDraftPayload | null>(null);
 
   const [showReminderModal, setShowReminderModal] = useState(false);
   const [reminderTargetMeds, setReminderTargetMeds] = useState<Medication[]>([]);
@@ -79,6 +97,7 @@ export default function InputPage() {
 
     void LocalDb.getCurrentGroup().then(async (g) => {
       if (!g) return;
+      setGroupId(g.group_id);
 
       setMeds(await LocalDb.getMedications(g.group_id));
 
@@ -86,7 +105,10 @@ export default function InputPage() {
       const savedSym = await LocalDb.getMeta(key);
       setSymptomsList(savedSym ? JSON.parse(savedSym) : FALLBACK_SYMPTOMS);
 
-      if (!targetUserId) return;
+      if (!targetUserId) {
+        setReady(true);
+        return;
+      }
 
       const users = await LocalDb.listUsers(g.group_id);
       const u = users.find((x) => x.uuid === targetUserId);
@@ -104,6 +126,7 @@ export default function InputPage() {
         if (!target) return;
 
         setMode("temp");
+        setOriginalRecordUpdatedAt(target.updated_at);
         setTemp(target.temp);
         setMemo(target.memo || "");
 
@@ -121,7 +144,11 @@ export default function InputPage() {
         setLoadedMedEvents(relatedMeds);
       } else if (editType === "med") {
         const target = allEvents.find((e) => e.uuid === editId);
-        if (!target) return;
+        if (!target) {
+          setReady(true);
+          return;
+        }
+        setOriginalRecordUpdatedAt(target.updated_at);
 
         setMode("meds");
         const d = new Date(target.occurred_at);
@@ -132,8 +159,73 @@ export default function InputPage() {
         if (currentId) setSelMeds([currentId]);
         setLoadedMedEvents([target]);
       }
+      setReady(true);
     });
   }, [targetUserId, editId, editType]);
+
+  const draftPayload = useMemo<InputDraftPayload>(() => ({
+    mode,
+    temp,
+    date,
+    time,
+    memo,
+    symptoms,
+    selectedMedicationIds: selMeds,
+  }), [date, memo, mode, selMeds, symptoms, temp, time]);
+
+  useEffect(() => {
+    if (ready && !initialDraftPayload) setInitialDraftPayload(draftPayload);
+  }, [draftPayload, initialDraftPayload, ready]);
+
+  const dirty = ready && initialDraftPayload !== null &&
+    JSON.stringify(draftPayload) !== JSON.stringify(initialDraftPayload);
+
+  const restoreDraft = useCallback((payload: InputDraftPayload) => {
+    setMode(payload.mode);
+    setTemp(payload.temp);
+    setDate(payload.date);
+    setTime(payload.time);
+    setMemo(payload.memo);
+    setSymptoms(payload.symptoms ?? []);
+    setSelMeds(payload.selectedMedicationIds ?? []);
+  }, []);
+
+  const primaryStore = editType === "med" ? "events" : "records";
+  const draft = useSafeDraft<InputDraftPayload>({
+    draftKey: groupId && targetUserId
+      ? `record:${targetUserId}:${editId ?? "new"}:${editType ?? mode}:${groupId}`
+      : null,
+    formType: "record",
+    groupId,
+    entityId: editId,
+    userId: targetUserId,
+    payload: draftPayload,
+    baseUpdatedAt: originalRecordUpdatedAt,
+    baseRow: null,
+    rowStore: editId ? primaryStore : null,
+    dirty,
+    ready,
+    onRestore: (payload, context) => {
+      restoreDraft(payload);
+      if (context.remoteChanged) setRemoteChanged(true);
+    },
+  });
+
+  useEffect(() => {
+    if (!editId || !originalRecordUpdatedAt) return;
+    return onDataRefreshRequested(({ stores }) => {
+      if (!stores.includes(primaryStore)) return;
+      void LocalDb.getSharedRow(primaryStore, editId).then((current) => {
+        if (current?.updated_at && current.updated_at !== originalRecordUpdatedAt) {
+          setRemoteChanged(true);
+        }
+      });
+    });
+  }, [editId, originalRecordUpdatedAt, primaryStore]);
+
+  const leave = useCallback(async () => {
+    if (await draft.requestLeaveKeepingDraft()) navigate(-1);
+  }, [draft, navigate]);
 
   const toggleSymptom = (s: string) => {
     setSymptoms((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
@@ -146,7 +238,14 @@ export default function InputPage() {
   const getTempColor = (t: number) => (t >= 37.5 ? "#FF5722" : "#66A9D9");
 
   const deleteRecord = async () => {
-    if (!confirm("この記録を削除しますか？")) return;
+    const confirmed = await showAppConfirm({
+      title: "この記録を削除しますか？",
+      message: "削除した記録は通常画面に表示されなくなります。",
+      confirmLabel: "削除する",
+      cancelLabel: "キャンセル",
+      danger: true,
+    });
+    if (!confirmed) return;
     setIsSaving(true);
     try {
       const g = await LocalDb.getCurrentGroup();
@@ -172,11 +271,12 @@ export default function InputPage() {
         });
       }
 
-      alert("削除しました");
+      await draft.clearDraft();
+      showSnackbar("記録を削除しました", { tone: "info" });
       navigate(-1);
     } catch (e) {
       console.error(e);
-      alert("削除に失敗しました");
+      await showAppAlert("削除に失敗しました", "入力内容は保持されています。");
       setIsSaving(false);
     }
   };
@@ -184,8 +284,18 @@ export default function InputPage() {
   const handleSave = async () => {
     if (isSaving) return;
     if (!targetUserId) {
-      alert("ユーザーが指定されていません");
+      await showAppAlert("記録できません", "対象のメンバーが指定されていません。");
       return;
+    }
+
+    if (remoteChanged) {
+      const proceed = await showAppConfirm({
+        title: "共有側にも新しい変更があります",
+        message: "現在の入力内容は保持されています。保存すると競合として確認が必要になる場合があります。この内容で保存しますか？",
+        confirmLabel: "この内容で保存する",
+        cancelLabel: "入力を続ける",
+      });
+      if (!proceed) return;
     }
 
     if (!showReminderModal && selMeds.length > 0) {
@@ -236,6 +346,8 @@ export default function InputPage() {
           measured_at: ts,
           is_deleted: 0,
           updated_at: new Date().toISOString(),
+        }, "local", {
+          baseUpdatedAt: editType === "temp" && editId ? originalRecordUpdatedAt : null,
         });
       }
 
@@ -249,7 +361,7 @@ export default function InputPage() {
             occurred_at: ts,
             is_deleted: 0,
             updated_at: new Date().toISOString(),
-          });
+          }, "local", { baseUpdatedAt: existingEvent.updated_at });
         } else {
           await LocalDb.upsertEvent({
             uuid: crypto.randomUUID(),
@@ -272,7 +384,7 @@ export default function InputPage() {
             ...evt,
             is_deleted: 1,
             updated_at: new Date().toISOString(),
-          });
+          }, "local", { baseUpdatedAt: evt.updated_at });
         }
       }
 
@@ -314,14 +426,16 @@ export default function InputPage() {
               updated_at: new Date().toISOString(),
             });
           }
-          alert(`${remindersToSet.length}件のリマインダーをセットしました`);
+          showSnackbar(`${remindersToSet.length}件のリマインダーをセットしました`, { tone: "info" });
         }
       }
 
+      await draft.clearDraft();
+      showSnackbar("この端末に保存しました");
       navigate(-1);
     } catch (e) {
       console.error(e);
-      alert("保存失敗");
+      await showAppAlert("保存できませんでした", "入力内容は保持されています。もう一度お試しください。");
       setIsSaving(false);
     }
   };
@@ -334,13 +448,13 @@ export default function InputPage() {
   return (
     <div style={styles.page}>
       <header style={styles.appBar}>
-        <button onClick={() => navigate(-1)} style={styles.navBtn}>
+        <button type="button" onClick={() => void leave()} disabled={isSaving} style={styles.navBtn}>
           キャンセル
         </button>
         <span style={styles.title}>
           {editId ? "記録の編集" : userName ? `${userName}の記録` : "記録する"}
         </span>
-        <button onClick={handleSave} disabled={isSaving} style={styles.navBtnBold}>
+        <button type="button" onClick={() => void handleSave()} disabled={isSaving} aria-busy={isSaving} style={styles.navBtnBold}>
           {isSaving ? "..." : editId ? "更新" : "保存"}
         </button>
       </header>
@@ -359,6 +473,13 @@ export default function InputPage() {
           >
             💊 投薬のみ
           </button>
+        </div>
+      )}
+
+      {remoteChanged && (
+        <div role="alert" style={{ margin: "12px 16px 0", padding: 12, borderRadius: 10, background: "#fef9c3", color: "#713f12" }}>
+          <strong>この記録は別の端末で更新されています</strong><br />
+          入力内容は保持しています。保存時に競合判定を行います。
         </div>
       )}
 

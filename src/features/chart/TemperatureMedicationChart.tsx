@@ -1,11 +1,12 @@
-﻿import { Chart } from 'react-chartjs-2';
+import { Chart } from 'react-chartjs-2';
 import 'chart.js/auto';
 import 'chartjs-adapter-date-fns';
-import type { ChartData, ChartOptions } from 'chart.js';
+import type { ChartData, ChartOptions, TooltipItem } from 'chart.js';
 
 type TempPoint = { time: number; value: number };
 // ★変更: value (Y軸の位置) を受け取れるようにする
 type MedPoint = { time: number; name: string; value?: number };
+type MedicationRawPoint = { x: number; y: number; medName: string };
 
 export type ViewMode = 'day' | 'week' | 'month' | 'year';
 
@@ -97,17 +98,21 @@ export default function TemperatureMedicationChart({ temperatures, medications, 
         displayColors: false,
         filter: (item) => item.dataset.label !== '高熱ライン',
         callbacks: {
-          label: (context: any) => {
+          label: (context: TooltipItem<'line' | 'scatter'>) => {
             if (context.dataset.type === 'scatter') {
-              return `💊 ${context.raw.medName}`;
+              const raw = context.raw as MedicationRawPoint;
+              return `💊 ${raw.medName}`;
             }
-            return `${context.parsed.y.toFixed(1)}℃`;
+            const y = context.parsed.y;
+            return typeof y === 'number' ? `${y.toFixed(1)}℃` : '';
           },
-          title: (context: any) => {
+          title: (context: TooltipItem<'line' | 'scatter'>[]) => {
              if (!context || !context.length || !context[0]?.parsed) {
                  return '';
              }
-             const date = new Date(context[0].parsed.x);
+             const x = context[0].parsed.x;
+             if (typeof x !== 'number') return '';
+             const date = new Date(x);
              if (viewMode === 'day') return `${date.getHours()}:${date.getMinutes().toString().padStart(2,'0')}`;
              return `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${date.getMinutes().toString().padStart(2,'0')}`;
           }

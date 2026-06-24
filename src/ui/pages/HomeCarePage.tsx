@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { ApiClient, AiCallError } from "../../data/remote/apiClient";
+import { showAppAlert } from "../feedback/feedbackService";
 
 // GAS 側の AI 中継機能を撤廃したため、システムプロンプトはここで完結させる
 const SYSTEM_PROMPT = `
@@ -36,11 +37,11 @@ export default function HomeCarePage() {
     } catch (e) {
       console.error(e);
       if (e instanceof AiCallError) {
-        alert(`エラー [${e.provider}/${e.stage}]: ${e.message}`);
+        await showAppAlert("AI相談でエラーが発生しました", `[${e.provider}/${e.stage}] ${e.message}`);
       } else if (e instanceof Error) {
-        alert("エラー: " + e.message);
+        await showAppAlert("AI相談でエラーが発生しました", e.message);
       } else {
-        alert("通信エラーが発生しました");
+        await showAppAlert("通信エラーが発生しました", "通信状態を確認して、もう一度お試しください。");
       }
     } finally {
       setLoading(false);

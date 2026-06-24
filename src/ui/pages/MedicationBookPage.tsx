@@ -1,12 +1,26 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import type { User, Medication } from "../../utils/types";
 import { parseInteraction, parseTags, parseSchedule } from "../../utils/aiParse";
 import { describeActiveAiModel } from "../../config/aiDefaults";
+import {
+  onDataRefreshRequested,
+  type SyncStoreName,
+} from "../../services/sync/syncEvents";
 
 // 五十音インデックス
 const INDEX_CHARS = ["あ", "か", "さ", "た", "な", "は", "ま", "や", "ら", "わ", "他"];
+
+const MEDICATION_BOOK_REFRESH_STORES = new Set<SyncStoreName>([
+  "groups",
+  "users",
+  "medications",
+]);
+
+function includesMedicationBookRefreshStore(stores: readonly SyncStoreName[]): boolean {
+  return stores.some((store) => MEDICATION_BOOK_REFRESH_STORES.has(store));
+}
 
 /** ヨミガナ先頭文字からインデックス文字を判定 */
 function getIndexChar(yomi: string): string {
@@ -43,15 +57,96 @@ export default function MedicationBookPage() {
   // セクションへのスクロール用 ref
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  useEffect(() => {
-    void (async () => {
-      const g = await LocalDb.getCurrentGroup();
-      if (!g) return;
-      setUsers(await LocalDb.listUsers(g.group_id));
-      setMedications(await LocalDb.getMedications(g.group_id));
-      setModelName(describeActiveAiModel(await LocalDb.getAiSettings()));
-    })();
+  const mountedRef = useRef(false);
+  const loadRequestIdRef = useRef(0);
+  const activeTabRef = useRef(activeTab);
+  const activeTagRef = useRef(activeTag);
+  const expandedMedIdRef = useRef(expandedMedId);
+
+  const loadMedicationBookData = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
+    const group = await LocalDb.getCurrentGroup();
+
+    if (!mountedRef.current || requestId !== loadRequestIdRef.current) return;
+
+    if (!group) {
+      activeTabRef.current = "ALL";
+      activeTagRef.current = null;
+      expandedMedIdRef.current = null;
+      setUsers([]);
+      setMedications([]);
+      setActiveTab("ALL");
+      setActiveTag(null);
+      setExpandedMedId(null);
+      return;
+    }
+
+    const [nextUsers, nextMedications, aiSettings] = await Promise.all([
+      LocalDb.listUsers(group.group_id),
+      LocalDb.getMedications(group.group_id),
+      LocalDb.getAiSettings(),
+    ]);
+
+    if (!mountedRef.current || requestId !== loadRequestIdRef.current) return;
+
+    const currentTab = activeTabRef.current;
+    if (currentTab !== "ALL" && !nextUsers.some((user) => user.uuid === currentTab)) {
+      activeTabRef.current = "ALL";
+      setActiveTab("ALL");
+    }
+
+    const currentTag = activeTagRef.current;
+    if (currentTag) {
+      const nextTags = new Set(nextMedications.flatMap((medication) => parseTags(medication.ai_tags)));
+      if (!nextTags.has(currentTag)) {
+        activeTagRef.current = null;
+        setActiveTag(null);
+      }
+    }
+
+    const currentExpandedId = expandedMedIdRef.current;
+    if (
+      currentExpandedId &&
+      !nextMedications.some((medication) => medication.uuid === currentExpandedId)
+    ) {
+      expandedMedIdRef.current = null;
+      setExpandedMedId(null);
+    }
+
+    setUsers(nextUsers);
+    setMedications(nextMedications);
+    setModelName(describeActiveAiModel(aiSettings));
   }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const initialLoadTimer = window.setTimeout(() => {
+      void loadMedicationBookData();
+    }, 0);
+
+    return () => {
+      mountedRef.current = false;
+      loadRequestIdRef.current += 1;
+      window.clearTimeout(initialLoadTimer);
+    };
+  }, [loadMedicationBookData]);
+
+  useEffect(() => {
+    return onDataRefreshRequested((detail) => {
+      if (!includesMedicationBookRefreshStore(detail.stores)) return;
+      void loadMedicationBookData();
+    });
+  }, [loadMedicationBookData]);
+
+  const handleSelectTab = (tab: string) => {
+    activeTabRef.current = tab;
+    setActiveTab(tab);
+  };
+
+  const handleSelectTag = (tag: string | null) => {
+    activeTagRef.current = tag;
+    setActiveTag(tag);
+  };
 
   // 全タグ抽出（重複排除・ソート）
   const allTags = Array.from(
@@ -80,7 +175,11 @@ export default function MedicationBookPage() {
   };
 
   const toggleDetail = (uuid: string) => {
-    setExpandedMedId((cur) => (cur === uuid ? null : uuid));
+    setExpandedMedId((currentId) => {
+      const nextId = currentId === uuid ? null : uuid;
+      expandedMedIdRef.current = nextId;
+      return nextId;
+    });
   };
 
   return (
@@ -125,7 +224,7 @@ export default function MedicationBookPage() {
         }}
       >
         <button
-          onClick={() => setActiveTab("ALL")}
+          onClick={() => handleSelectTab("ALL")}
           style={{
             padding: "12px 16px",
             background: "none",
@@ -142,7 +241,7 @@ export default function MedicationBookPage() {
         {users.map((u) => (
           <button
             key={u.uuid}
-            onClick={() => setActiveTab(u.uuid)}
+            onClick={() => handleSelectTab(u.uuid)}
             style={{
               padding: "12px 16px",
               background: "none",
@@ -175,7 +274,7 @@ export default function MedicationBookPage() {
         >
           <div style={{ fontSize: 12, color: "#666", fontWeight: "bold", flexShrink: 0 }}>絞り込み:</div>
           <button
-            onClick={() => setActiveTag(null)}
+            onClick={() => handleSelectTag(null)}
             style={{
               padding: "6px 12px",
               borderRadius: 16,
@@ -193,7 +292,7 @@ export default function MedicationBookPage() {
           {allTags.map((tag) => (
             <button
               key={tag}
-              onClick={() => setActiveTag(tag === activeTag ? null : tag)}
+              onClick={() => handleSelectTag(tag === activeTag ? null : tag)}
               style={{
                 padding: "6px 12px",
                 borderRadius: 16,

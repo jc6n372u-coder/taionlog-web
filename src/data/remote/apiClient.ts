@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
-import type { PushData, SyncResponse } from "../../utils/types";
+import type { SyncPushPayload, PushAcknowledgement, PushConflict } from "../local/localDb";
 import { getDeviceId } from "../../security/deviceId";
 import { LocalDb } from "../local/localDb";
 import { AI_DEFAULTS } from "../../config/aiDefaults";
@@ -19,13 +19,17 @@ import { parseJsonLoose } from "../../utils/aiParse";
 // セキュリティ:
 //   VITE_ プレフィックス付き変数はビルド時にバンドルへ静的に埋め込まれます。
 //   そのため VITE_API_SECRET はクライアント JS を解析すれば露出します。
-//   これは「共有秘密キーによる軽い保護」であり真の認証ではない点に留意。
+//   これは「共有秘密キーによる軽い保護」であり真の認証ではありません。
+//
+//   ADMIN_SECRET はフロントエンド、Cloudflare、IndexedDBへ保存しません。
+//   管理者APIはこの ApiClient から意図的に公開しません。
 // =============================================================
-const baseUrl = import.meta.env.VITE_GAS_BASE_URL as string | undefined;
-const apiSecret = import.meta.env.VITE_API_SECRET as string | undefined;
+const baseUrl = (import.meta.env.VITE_GAS_BASE_URL as string | undefined)?.trim();
+const apiSecret = (import.meta.env.VITE_API_SECRET as string | undefined)?.trim();
+
+const REQUEST_TIMEOUT_MS = 30_000;
 
 if (!baseUrl || !apiSecret) {
-  // 開発時の typo / 本番デプロイ時の設定漏れを早期検知
   console.error(
     "[ApiClient] 必須環境変数が未設定です: VITE_GAS_BASE_URL / VITE_API_SECRET。" +
       ".env または Cloudflare Pages の変数とシークレットを確認してください。"
@@ -33,8 +37,70 @@ if (!baseUrl || !apiSecret) {
 }
 
 // =============================================================
-// 型定義
+// GAS 通信の型定義
 // =============================================================
+type JsonObject = Record<string, unknown>;
+
+type GasSuccessResponse<T> = {
+  ok: true;
+  data: T;
+};
+
+type GasStructuredError = {
+  code?: unknown;
+  message?: unknown;
+  retryable?: unknown;
+};
+
+type CreateGroupData = {
+  group_id: string;
+  name: string;
+  join_code: string;
+  expires_at: string;
+};
+
+type JoinGroupData = {
+  group_id: string;
+  name: string;
+};
+
+type GroupInfoData = JsonObject & {
+  uuid?: string;
+  group_id?: string;
+  name?: string;
+};
+
+export class ApiClientError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly retryable: boolean,
+    public readonly httpStatus: number | null = null,
+    public readonly cause?: unknown
+  ) {
+    super(message);
+    this.name = "ApiClientError";
+  }
+}
+
+export type SyncApiPulledPayload = {
+  users?: Record<string, unknown>[];
+  records?: Record<string, unknown>[];
+  medications?: Record<string, unknown>[];
+  events?: Record<string, unknown>[];
+  reminders?: Record<string, unknown>[];
+  groups?: Record<string, unknown>[];
+  settings?: Record<string, unknown> | null;
+};
+
+export type SyncApiResponseData = {
+  pulled: SyncApiPulledPayload;
+  pushed: Record<string, number>;
+  acknowledgements: PushAcknowledgement[];
+  conflicts: PushConflict[];
+  server_cursor: string;
+};
+
 export interface MedicationGuidance {
   description: string;
   side_effects: string;
@@ -59,50 +125,264 @@ export class AiCallError extends Error {
 }
 
 // =============================================================
-// 内部ユーティリティ
+// GAS 通信ユーティリティ
 // =============================================================
-function translateError(error?: string): string {
-  switch (error) {
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getDefaultRetryable(code: string): boolean {
+  return ![
+    "INVALID_REQUEST",
+    "UNAUTHORIZED",
+    "SERVER_CONFIG_ERROR",
+    "SHEET_NOT_FOUND",
+    "GROUP_NOT_FOUND",
+    "INVALID_JOIN_CODE",
+    "JOIN_CODE_EXPIRED",
+    "INVALID_SECRET",
+    "CLIENT_CONFIG_ERROR",
+  ].includes(code);
+}
+
+function normalizeLegacyServerError(error: unknown): {
+  code: string;
+  message: string;
+  retryable: boolean;
+} {
+  const raw = typeof error === "string" ? error.trim() : "";
+
+  switch (raw) {
     case "Unauthorized":
-      return "認証に失敗しました";
+      return { code: "UNAUTHORIZED", message: "認証に失敗しました", retryable: false };
     case "Rate limit exceeded. Try again later.":
-      return "アクセス頻度が高すぎます。しばらく待ってください";
+      return {
+        code: "RATE_LIMITED",
+        message: "アクセス頻度が高すぎます。しばらく待ってください",
+        retryable: true,
+      };
     case "Join code expired":
-      return "参加コードの期限が切れています";
+      return {
+        code: "JOIN_CODE_EXPIRED",
+        message: "参加コードの期限が切れています",
+        retryable: false,
+      };
     case "Invalid join code":
-      return "参加コードが正しくありません";
+      return {
+        code: "INVALID_JOIN_CODE",
+        message: "参加コードが正しくありません",
+        retryable: false,
+      };
     case "Group not found":
-      return "グループが見つかりません";
+      return {
+        code: "GROUP_NOT_FOUND",
+        message: "グループが見つかりません",
+        retryable: false,
+      };
     case "Server busy":
-      return "サーバーが混雑しています。少し待ってから再試行してください";
+      return {
+        code: "SYNC_BUSY",
+        message: "サーバーが混雑しています。少し待ってから再試行してください",
+        retryable: true,
+      };
     default:
-      return error ?? "不明なエラーが発生しました";
+      return {
+        code: "SERVER_ERROR",
+        message: raw || "サーバー処理に失敗しました",
+        retryable: true,
+      };
   }
 }
 
-async function post(body: Record<string, any>) {
-  if (!baseUrl || !apiSecret) {
-    throw new Error("環境変数 (VITE_GAS_BASE_URL / VITE_API_SECRET) が未設定です");
+function toApiClientError(error: unknown, httpStatus: number | null = null): ApiClientError {
+  if (error instanceof ApiClientError) return error;
+
+  if (isJsonObject(error)) {
+    const structured = error as GasStructuredError;
+    const code =
+      typeof structured.code === "string" && structured.code.trim()
+        ? structured.code.trim()
+        : "SERVER_ERROR";
+    const message =
+      typeof structured.message === "string" && structured.message.trim()
+        ? structured.message.trim()
+        : "サーバー処理に失敗しました";
+    const retryable =
+      typeof structured.retryable === "boolean"
+        ? structured.retryable
+        : getDefaultRetryable(code);
+
+    return new ApiClientError(message, code, retryable, httpStatus, error);
   }
-  const device_id = await getDeviceId();
+
+  const legacy = normalizeLegacyServerError(error);
+  return new ApiClientError(
+    legacy.message,
+    legacy.code,
+    legacy.retryable,
+    httpStatus,
+    error
+  );
+}
+
+function createHttpError(status: number, statusText: string): ApiClientError {
+  if (status === 401 || status === 403) {
+    return new ApiClientError("認証に失敗しました", "UNAUTHORIZED", false, status);
+  }
+
+  if (status === 408 || status === 504) {
+    return new ApiClientError(
+      "通信がタイムアウトしました",
+      "NETWORK_TIMEOUT",
+      true,
+      status
+    );
+  }
+
+  if (status === 429) {
+    return new ApiClientError(
+      "アクセス頻度が高すぎます。しばらく待ってください",
+      "RATE_LIMITED",
+      true,
+      status
+    );
+  }
+
+  if (status >= 500) {
+    return new ApiClientError(
+      "サーバー処理に失敗しました",
+      "SERVER_ERROR",
+      true,
+      status
+    );
+  }
+
+  return new ApiClientError(
+    `サーバーとの通信に失敗しました (${status}${statusText ? ` ${statusText}` : ""})`,
+    "HTTP_ERROR",
+    false,
+    status
+  );
+}
+
+async function readJsonResponse(response: Response): Promise<unknown> {
+  const bodyText = await response.text();
+  if (!bodyText.trim()) return null;
+
+  try {
+    return JSON.parse(bodyText) as unknown;
+  } catch (error) {
+    throw new ApiClientError(
+      "サーバー応答を読み取れませんでした",
+      "INVALID_RESPONSE",
+      true,
+      response.status,
+      error
+    );
+  }
+}
+
+function parseGasResponse<T>(json: unknown, httpStatus: number): GasSuccessResponse<T> {
+  if (!isJsonObject(json)) {
+    throw new ApiClientError(
+      "サーバー応答の形式が正しくありません",
+      "INVALID_RESPONSE",
+      true,
+      httpStatus
+    );
+  }
+
+  if (json.ok === false) {
+    throw toApiClientError(json.error, httpStatus);
+  }
+
+  // v15以前の文字列エラー応答との段階的互換。
+  if (json.status === "error") {
+    throw toApiClientError(json.error ?? json.message, httpStatus);
+  }
+
+  if (json.ok !== true || !("data" in json)) {
+    throw new ApiClientError(
+      "サーバー応答の形式が正しくありません",
+      "INVALID_RESPONSE",
+      true,
+      httpStatus
+    );
+  }
+
+  return json as GasSuccessResponse<T>;
+}
+
+async function post<T>(body: JsonObject): Promise<GasSuccessResponse<T>> {
+  if (!baseUrl || !apiSecret) {
+    throw new ApiClientError(
+      "環境変数 (VITE_GAS_BASE_URL / VITE_API_SECRET) が未設定です",
+      "CLIENT_CONFIG_ERROR",
+      false
+    );
+  }
+
+  const deviceId = await getDeviceId();
   const payload = {
     ...body,
     api_secret: apiSecret,
-    device_id,
+    device_id: deviceId,
   };
 
-  const res = await fetch(baseUrl, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain" },
-    body: JSON.stringify(payload),
-    redirect: "follow",
-  });
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  if (!res.ok) throw new Error("サーバーエラーが発生しました");
-  const json = await res.json();
-  if (json.status === "error") throw new Error(json.message);
-  if (json.ok === false) throw new Error(translateError(json.error));
-  return json;
+  try {
+    const response = await fetch(baseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify(payload),
+      redirect: "follow",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+
+    let json: unknown = null;
+    try {
+      json = await readJsonResponse(response);
+    } catch (error) {
+      if (!response.ok) {
+        throw createHttpError(response.status, response.statusText);
+      }
+      throw error;
+    }
+
+    if (!response.ok) {
+      if (isJsonObject(json) && json.ok === false) {
+        throw toApiClientError(json.error, response.status);
+      }
+      throw createHttpError(response.status, response.statusText);
+    }
+
+    return parseGasResponse<T>(json, response.status);
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiClientError(
+        "通信がタイムアウトしました",
+        "NETWORK_TIMEOUT",
+        true,
+        null,
+        error
+      );
+    }
+
+    throw new ApiClientError(
+      "ネットワークに接続できませんでした",
+      "NETWORK_ERROR",
+      true,
+      null,
+      error
+    );
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
 }
 
 // =============================================================
@@ -115,7 +395,7 @@ async function post(body: Record<string, any>) {
 //   これにより
 //     - GAS の実行時間制限 / 料金制限を消費しない
 //     - キーが GAS のログに残らない
-//     - Anthropic 公式 SDK の仕様 (dangerouslyAllowBrowser) を承知の上で利用
+//     - Groq SDK のブラウザ利用設定を承知の上で利用
 //
 function buildMedPrompt(target: string, others: string[]): string {
   return `
@@ -160,17 +440,29 @@ async function callJsonAi(prompt: string): Promise<MedicationGuidance> {
       const text = result.response.text();
       const parsed = parseJsonLoose<MedicationGuidance>(text);
       if (parsed) return parsed;
-      lastError = new AiCallError("Gemini の応答を JSON として解釈できませんでした", "gemini", "parse");
-    } catch (e) {
-      console.warn("Gemini failed:", e);
-      lastError = new AiCallError("Gemini 呼び出しに失敗しました", "gemini", "request", e);
+      lastError = new AiCallError(
+        "Gemini の応答を JSON として解釈できませんでした",
+        "gemini",
+        "parse"
+      );
+    } catch (error) {
+      console.warn("Gemini failed:", error);
+      lastError = new AiCallError(
+        "Gemini 呼び出しに失敗しました",
+        "gemini",
+        "request",
+        error
+      );
     }
   }
 
   // 2) Groq フォールバック
   if (settings.groqApiKey) {
     try {
-      const groq = new Groq({ apiKey: settings.groqApiKey, dangerouslyAllowBrowser: true });
+      const groq = new Groq({
+        apiKey: settings.groqApiKey,
+        dangerouslyAllowBrowser: true,
+      });
       const completion = await groq.chat.completions.create({
         messages: [{ role: "user", content: prompt }],
         model: settings.groqModel || AI_DEFAULTS.groq.model,
@@ -179,10 +471,19 @@ async function callJsonAi(prompt: string): Promise<MedicationGuidance> {
       const text = completion.choices[0]?.message?.content || "";
       const parsed = parseJsonLoose<MedicationGuidance>(text);
       if (parsed) return parsed;
-      lastError = new AiCallError("Groq の応答を JSON として解釈できませんでした", "groq", "parse");
-    } catch (e) {
-      console.error("Groq failed:", e);
-      lastError = new AiCallError("Groq 呼び出しに失敗しました", "groq", "request", e);
+      lastError = new AiCallError(
+        "Groq の応答を JSON として解釈できませんでした",
+        "groq",
+        "parse"
+      );
+    } catch (error) {
+      console.error("Groq failed:", error);
+      lastError = new AiCallError(
+        "Groq 呼び出しに失敗しました",
+        "groq",
+        "request",
+        error
+      );
     }
   }
 
@@ -212,16 +513,24 @@ async function callTextAi(systemPrompt: string, userPrompt: string): Promise<str
       const text = result.response.text();
       if (text) return text;
       lastError = new AiCallError("Gemini の応答が空でした", "gemini", "empty");
-    } catch (e) {
-      console.warn("Gemini failed:", e);
-      lastError = new AiCallError("Gemini 呼び出しに失敗しました", "gemini", "request", e);
+    } catch (error) {
+      console.warn("Gemini failed:", error);
+      lastError = new AiCallError(
+        "Gemini 呼び出しに失敗しました",
+        "gemini",
+        "request",
+        error
+      );
     }
   }
 
   // 2) Groq フォールバック
   if (settings.groqApiKey) {
     try {
-      const groq = new Groq({ apiKey: settings.groqApiKey, dangerouslyAllowBrowser: true });
+      const groq = new Groq({
+        apiKey: settings.groqApiKey,
+        dangerouslyAllowBrowser: true,
+      });
       const completion = await groq.chat.completions.create({
         messages: [
           { role: "system", content: systemPrompt },
@@ -233,9 +542,14 @@ async function callTextAi(systemPrompt: string, userPrompt: string): Promise<str
       const text = completion.choices[0]?.message?.content || "";
       if (text) return text;
       lastError = new AiCallError("Groq の応答が空でした", "groq", "empty");
-    } catch (e) {
-      console.error("Groq failed:", e);
-      lastError = new AiCallError("Groq 呼び出しに失敗しました", "groq", "request", e);
+    } catch (error) {
+      console.error("Groq failed:", error);
+      lastError = new AiCallError(
+        "Groq 呼び出しに失敗しました",
+        "groq",
+        "request",
+        error
+      );
     }
   }
 
@@ -246,18 +560,30 @@ async function callTextAi(systemPrompt: string, userPrompt: string): Promise<str
 // 公開 API
 // =============================================================
 export const ApiClient = {
-  // --- GAS 経由のサーバー機能 ---
-  createGroup: async (name: string) => post({ action: "create_group", name }),
-  joinGroup: async (join_code: string) => post({ action: "join_group", join_code }),
-  getGroupInfo: async (group_id: string) => post({ action: "get_group_info", group_id }),
-  rotateSecret: async (new_secret: string) => post({ action: "rotate_secret", new_secret }),
-  sync: async (group_id: string, since: string, push: PushData): Promise<SyncResponse> =>
-    post({ action: "sync", group_id, since, push }),
+  // --- GAS 経由の一般利用者向け機能 ---
+  createGroup: async (name: string): Promise<GasSuccessResponse<CreateGroupData>> =>
+    post<CreateGroupData>({ action: "create_group", name }),
+
+  joinGroup: async (joinCode: string): Promise<GasSuccessResponse<JoinGroupData>> =>
+    post<JoinGroupData>({ action: "join_group", join_code: joinCode }),
+
+  getGroupInfo: async (groupId: string): Promise<GasSuccessResponse<GroupInfoData>> =>
+    post<GroupInfoData>({ action: "get_group_info", group_id: groupId }),
+
+  sync: async (
+    groupId: string,
+    since: string,
+    push: SyncPushPayload
+  ): Promise<GasSuccessResponse<SyncApiResponseData>> =>
+    post<SyncApiResponseData>({ action: "sync", group_id: groupId, since, push }),
+
+  // 管理者API (rotate_secret / revoke_previous_secret / get_secret_status) は
+  // ADMIN_SECRETをブラウザへ持ち込まないため、ここへ定義しない。
 
   // --- AI（クライアント直接呼び出し） ---
   /**
    * お薬手帳用の構造化 AI 相談。
-   * 失敗時は AiCallError を throw する（旧実装の null 返しを廃止）。
+   * 失敗時は AiCallError を throw する。
    */
   fetchMedicationGuidance: async (payload: {
     targetMedName: string;

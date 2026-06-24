@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import { LocalDb } from "../../data/local/localDb";
 import { ApiClient, AiCallError } from "../../data/remote/apiClient";
 import type { User, RecordRow } from "../../utils/types";
+import { showAppAlert, showSnackbar } from "../feedback/feedbackService";
 
 const SYSTEM_PROMPT = `
 あなたは小児科医です。
@@ -44,7 +45,7 @@ export default function QuestionnairePage() {
 
   const handleGenerate = async () => {
     if (!selectedUser) {
-      alert("対象の家族を選択してください");
+      await showAppAlert("対象を選択してください", "問診票を作成する家族を選択してください。");
       return;
     }
     setLoading(true);
@@ -67,11 +68,11 @@ export default function QuestionnairePage() {
     } catch (e) {
       console.error(e);
       if (e instanceof AiCallError) {
-        alert(`エラー [${e.provider}/${e.stage}]: ${e.message}\n\nAPIキー設定を確認してください。`);
+        await showAppAlert("問診票を作成できませんでした", `[${e.provider}/${e.stage}] ${e.message}\n\nAPIキー設定を確認してください。`);
       } else if (e instanceof Error) {
-        alert("エラー: " + e.message);
+        await showAppAlert("問診票を作成できませんでした", e.message);
       } else {
-        alert("通信エラーが発生しました");
+        await showAppAlert("通信エラーが発生しました", "通信状態を確認して、もう一度お試しください。");
       }
     } finally {
       setLoading(false);
@@ -233,7 +234,7 @@ export default function QuestionnairePage() {
 
             <button
               onClick={() =>
-                void navigator.clipboard.writeText(result).then(() => alert("コピーしました"))
+                void navigator.clipboard.writeText(result).then(() => showSnackbar("コピーしました"))
               }
               style={{
                 marginTop: 16,

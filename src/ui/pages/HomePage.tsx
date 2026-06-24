@@ -1,217 +1,199 @@
-﻿import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
-import { useSync } from "../../services/sync/syncService"; 
-import type { User, RecordRow } from "../../utils/types";
+import { onDataRefreshRequested, type SyncStoreName } from "../../services/sync/syncEvents";
+import type { RecordRow, SettingsRow, User } from "../../utils/types";
+import { showAppConfirm } from "../feedback/feedbackService";
+import { COLORS } from "../tokens";
 
-// 日付フォーマッター（MM/DD(曜日)）
-function formatDate(iso: string) {
-  const d = new Date(iso);
-  const week = ["日","月","火","水","木","金","土"];
-  return `${d.getMonth()+1}/${d.getDate()}(${week[d.getDay()]})`;
-}
+const HOME_REFRESH_STORES = new Set<SyncStoreName>(["groups", "users", "records", "settings"]);
+const dateFormatter = new Intl.DateTimeFormat("ja-JP", {
+  timeZone: "Asia/Tokyo",
+  month: "numeric",
+  day: "numeric",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 
-// 相対日付フォーマッター（今日、昨日、N日前）
-function formatRelativeDate(iso: string) {
-  const d = new Date(iso);
-  const now = new Date();
-  const diff = now.getTime() - d.getTime();
-  const dayDiff = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (dayDiff === 0) return "今日";
-  if (dayDiff === 1) return "昨日";
-  return `${dayDiff}日前`;
-}
-
-// 時刻フォーマッター（HH:MM）
-function formatTime(iso: string) {
-  const d = new Date(iso);
-  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-}
-
-// 「今日」かどうか判定
-function isToday(iso: string) {
-  const d = new Date(iso);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear()
-      && d.getMonth() === now.getMonth()
-      && d.getDate() === now.getDate();
+function includesHomeRefreshStore(stores: readonly SyncStoreName[]): boolean {
+  return stores.some((store) => HOME_REFRESH_STORES.has(store));
 }
 
 export default function HomePage() {
-  const nav = useNavigate();
-  const { syncState, runSync } = useSync();
-
+  const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [records, setRecords] = useState<RecordRow[]>([]);
-  const [settings, setSettings] = useState<any>(null);
+  const [settings, setSettings] = useState<SettingsRow | null>(null);
   const [isAiReady, setIsAiReady] = useState(false);
-
-  // データ読み込み
-  const loadData = async () => {
-    const g = await LocalDb.getCurrentGroup();
-    if (!g) return nav("/onboarding");
-    // 設定確保
-    const s = await LocalDb.ensureSettings(g.group_id);
-    setSettings(s);
-
-    const us = await LocalDb.listUsers(g.group_id);
-    setUsers(us);
-
-    // 各ユーザーの最新記録を取得
-    const allRecs: RecordRow[] = [];
-    for (const u of us) {
-      const recs = await LocalDb.listRecords(u.uuid);
-      if (recs.length > 0) {
-        recs.sort((a,b) => new Date(b.measured_at).getTime() - new Date(a.measured_at).getTime());
-        allRecs.push(recs[0]);
-      }
-    }
-    setRecords(allRecs);
-
-    // AI設定チェック
-    const aiSettings = await LocalDb.getAiSettings();
-    if (aiSettings && (aiSettings.geminiApiKey || aiSettings.groqApiKey)) {
-      setIsAiReady(true);
-    } else {
-      setIsAiReady(false);
-    }
-  };
+  const [loading, setLoading] = useState(true);
+  const mountedRef = useRef(true);
+  const loadRequestIdRef = useRef(0);
 
   useEffect(() => {
-    loadData();
-  }, [nav]);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-  // 同期実行
-  const doSync = async () => {
-    await runSync();
-    await loadData();
-  };
-
-  // 記録開始（行タップ時）
-  const startRecord = (userId: string) => {
-    nav(`/input?userId=${userId}`);
-  };
-
-  const handleSupportClick = () => {
-    if (isAiReady) {
-      nav("/ai-support");
-    } else {
-      if (confirm("AIサポート機能を使うにはAPIキーの設定が必要です。\n設定画面に移動しますか？")) {
-        nav("/settings/ai");
-      }
+  const loadData = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
+    const group = await LocalDb.getCurrentGroup();
+    if (!group) {
+      if (mountedRef.current) navigate("/onboarding", { replace: true });
+      return;
     }
+
+    const [nextSettings, nextUsers, aiSettings] = await Promise.all([
+      LocalDb.ensureSettings(group.group_id),
+      LocalDb.listUsers(group.group_id),
+      LocalDb.getAiSettings(),
+    ]);
+    const latestRecords = await Promise.all(
+      nextUsers.map(async (user) => (await LocalDb.listRecords(user.uuid))[0] ?? null),
+    );
+    if (!mountedRef.current || requestId !== loadRequestIdRef.current) return;
+    setSettings(nextSettings);
+    setUsers(nextUsers);
+    setRecords(latestRecords.filter((record): record is RecordRow => record !== null));
+    setIsAiReady(Boolean(aiSettings?.geminiApiKey || aiSettings?.groqApiKey));
+    setLoading(false);
+  }, [navigate]);
+
+  useEffect(() => {
+    queueMicrotask(() => void loadData());
+  }, [loadData]);
+
+  useEffect(() => {
+    return onDataRefreshRequested(({ stores }) => {
+      if (includesHomeRefreshStore(stores)) void loadData();
+    });
+  }, [loadData]);
+
+  const handleSupportClick = async () => {
+    if (isAiReady) {
+      navigate("/ai-support");
+      return;
+    }
+    const move = await showAppConfirm({
+      title: "AIサポートの設定が必要です",
+      message: "AIサポート機能を使うにはAPIキーを設定してください。設定画面へ移動しますか？",
+      confirmLabel: "設定画面へ移動",
+      cancelLabel: "あとで",
+    });
+    if (move) navigate("/settings/ai");
   };
 
   return (
     <div style={styles.page}>
-      <header style={styles.appBar}>
-        <div style={styles.appBarLeft}>
-            <span style={{fontWeight:"bold", fontSize: 18}}>たいおんログ</span>
-        </div>
-        <div style={styles.appBarRight}>
-          <button onClick={doSync} disabled={syncState.isLoading} style={styles.iconBtn}>
-              {syncState.isLoading ? "..." : "同期"}
-          </button>
-          <button onClick={() => nav("/settings")} style={styles.iconBtn}>設定</button>
+      <header style={styles.header}>
+        <div>
+          <h1 data-page-heading style={styles.title}>たいおんログ</h1>
+          <p style={styles.subtitle}>記録するメンバーを選んでください</p>
         </div>
       </header>
 
-      <main style={styles.body}>
-        <div style={styles.card}>
-            <div style={styles.cardHeader}>
-                <span>最新の記録</span>
-                <button onClick={() => nav("/chart")} style={styles.linkBtn}>グラフを見る →</button>
+      <div style={styles.body}>
+        <section style={styles.card} aria-labelledby="latest-heading">
+          <div style={styles.cardHeader}>
+            <h2 id="latest-heading" style={styles.sectionTitle}>最新の記録</h2>
+            <button type="button" onClick={() => navigate("/chart")} style={styles.textButton}>
+              グラフを見る
+            </button>
+          </div>
+
+          {loading && (
+            <div role="status" style={styles.emptyState}>
+              <strong>記録を読み込んでいます</strong>
+              <span>保存済みデータは変更していません。</span>
             </div>
-            {users.length === 0 && (
-                <div style={{padding:20, textAlign:"center", color:"#999"}}>
-                    メンバーがいません<br/>設定から追加してください
-                </div>
-            )}
-            {users.map(u => {
-                const rec = records.find(r => r.user_uuid === u.uuid);
-                const showTemp = settings?.show_temp_on_home ?? true;
-                const isFever = rec && rec.temp >= 37.5;
-                const tempColor = isFever ? "#FF5722" : "#66A9D9";
+          )}
 
-                let tempStr = "—";
-                if (rec) {
-                    if (rec.temp === 0) {
-                          tempStr = "投薬";
-                    } else if (showTemp) {
-                          tempStr = `${rec.temp.toFixed(1)}℃`;
-                    } else {
-                          tempStr = "**.*℃";
-                    }
-                }
+          {!loading && users.length === 0 && (
+            <div style={styles.emptyState}>
+              <strong>メンバーがまだ登録されていません</strong>
+              <span>設定からメンバーを追加すると、体温を記録できます。</span>
+              <button type="button" onClick={() => navigate("/settings/group")} style={styles.primaryButton}>
+                メンバーを追加する
+              </button>
+            </div>
+          )}
 
-                return (
-                    <div key={u.uuid} style={styles.row} onClick={() => startRecord(u.uuid)}>
-                        {/* 1. 名前エリア */}
-                        <div style={styles.userName}>{u.name}</div>
-                        
-                        {/* 2. 体温エリア (幅100pxに拡張して余白を作る) */}
-                        <div style={{...styles.tempCol, color: tempColor, fontSize: rec && rec.temp === 0 ? 14 : 18}}>
-                            {tempStr}
-                        </div>
-
-                        {/* 3. 日付エリア */}
-                        <div style={styles.dateCol}>
-                            {rec ? formatDate(rec.measured_at) : "未記録"}
-                        </div>
-
-                        {/* 4. 相対日付エリア + 今日なら時刻表示 */}
-                        <div style={styles.relativeDateCol}>
-                            {rec ? formatRelativeDate(rec.measured_at) : ""}
-                            {rec && isToday(rec.measured_at) && (
-                                <div style={{fontSize: 11, color: "#666", marginTop: 1}}>
-                                    {formatTime(rec.measured_at)}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                );
+          <div style={styles.memberList}>
+            {users.map((user) => {
+              const record = records.find((item) => item.user_uuid === user.uuid);
+              const showTemp = settings?.show_temp_on_home ?? true;
+              const tempText = !record
+                ? "未記録"
+                : record.temp === 0
+                  ? "投薬"
+                  : showTemp
+                    ? `${record.temp.toFixed(1)}℃`
+                    : "**.*℃";
+              const isFever = Boolean(record && record.temp >= 37.5);
+              return (
+                <button
+                  key={user.uuid}
+                  type="button"
+                  onClick={() => navigate(`/input?userId=${user.uuid}`)}
+                  aria-label={`${user.name}の体温を記録する。最新記録は${tempText}`}
+                  style={styles.memberCard}
+                >
+                  <span style={styles.memberTopRow}>
+                    <strong style={styles.memberName}>{user.name}</strong>
+                    <span style={{ ...styles.temperature, color: isFever ? COLORS.fever : COLORS.primaryDark }}>
+                      {tempText}
+                    </span>
+                  </span>
+                  <span style={styles.memberBottomRow}>
+                    <span>{record ? dateFormatter.format(new Date(record.measured_at)) : "まだ記録がありません"}</span>
+                    <strong style={styles.recordAction}>体温を記録する <span aria-hidden="true">›</span></strong>
+                  </span>
+                </button>
+              );
             })}
-        </div>
-      </main>
+          </div>
+        </section>
 
-      <button 
-        onClick={handleSupportClick} 
-        style={{ 
-          ...styles.fab,
-          background: isAiReady ? "#111827" : "#9ca3af",
-          width: "auto",
-          padding: "0 24px",
-          borderRadius: 30,
-          fontSize: 16,
-          transition: "background 0.3s"
-        }}
-      >
-        {isAiReady ? "🤖 サポート" : "⚙️ 設定が必要"}
+        <section style={styles.quickCard} aria-labelledby="quick-heading">
+          <h2 id="quick-heading" style={styles.sectionTitle}>よく使う機能</h2>
+          <div style={styles.quickGrid}>
+            <button type="button" onClick={() => navigate("/medication-book")} style={styles.quickButton}>お薬手帳</button>
+            <button type="button" onClick={() => navigate("/invite")} style={styles.quickButton}>家族を招待</button>
+          </div>
+        </section>
+      </div>
+
+      <button type="button" onClick={() => void handleSupportClick()} style={{ ...styles.fab, background: isAiReady ? COLORS.dark : COLORS.textMuted }}>
+        {isAiReady ? "AIサポート" : "AI設定が必要"}
       </button>
-
     </div>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  page: { minHeight: "100dvh", background: "#f4f5f7", display: "flex", flexDirection: "column" },
-  appBar: { height: 56, background: "#66A9D9", color: "white", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)", position: "sticky", top: 0, zIndex: 10 },
-  appBarLeft: { display: "flex", alignItems: "center", gap: 8 },
-  appBarRight: { display: "flex", gap: 16 },
-  iconBtn: { background: "transparent", border: "none", color: "white", fontSize: 14, cursor: "pointer", fontWeight: "bold" },
-  body: { padding: 16, flex: 1 },
-  card: { background: "white", borderRadius: 12, padding: 16, boxShadow: "0 1px 3px rgba(0,0,0,0.1)" },
-  cardHeader: { display: "flex", justifyContent: "space-between", marginBottom: 12, fontSize: 14, color: "#666" },
-  linkBtn: { background: "transparent", border: "none", color: "#66A9D9", cursor: "pointer" },
-  
-  row: { display: "flex", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #eee", cursor: "pointer" },
-  userName: { flex: 1, fontWeight: "bold", color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 8 },
-  
-  // ★幅を調整してバランス改善
-  tempCol: { width: 100, fontWeight: "bold", textAlign: "left", flexShrink: 0 }, // 64 -> 100
-  dateCol: { width: 90, fontSize: 13, color: "#666", textAlign: "left", flexShrink: 0 }, // 80 -> 90
-  relativeDateCol: { fontSize: 12, color: "#999", textAlign: "right", marginLeft: "auto", minWidth: 45, flexShrink: 0 },
-
-  fab: { position: "fixed", bottom: 24, right: 24, color: "white", border: "none", height: 56, fontWeight: "bold", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" },
+const styles: Record<string, CSSProperties> = {
+  page: { minHeight: "100%", background: COLORS.bg, paddingBottom: 96 },
+  header: { maxWidth: 680, margin: "0 auto", padding: "18px 16px 8px" },
+  title: { margin: 0, fontSize: 24, color: COLORS.text },
+  subtitle: { margin: "4px 0 0", color: COLORS.textMuted },
+  body: { maxWidth: 680, margin: "0 auto", padding: "8px 12px", display: "grid", gap: 14 },
+  card: { background: COLORS.surface, borderRadius: 16, padding: 16, border: `1px solid ${COLORS.borderLight}` },
+  quickCard: { background: COLORS.surface, borderRadius: 16, padding: 16, border: `1px solid ${COLORS.borderLight}` },
+  cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 },
+  sectionTitle: { margin: 0, fontSize: 17, color: COLORS.text },
+  textButton: { border: "none", background: "transparent", color: COLORS.primaryDark, fontWeight: 700, padding: "0 8px" },
+  memberList: { marginTop: 12, display: "grid", gap: 10 },
+  memberCard: { width: "100%", minHeight: 92, display: "grid", gap: 10, padding: 14, borderRadius: 14, border: `1px solid ${COLORS.border}`, background: COLORS.surface, textAlign: "left" },
+  memberTopRow: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 },
+  memberName: { fontSize: 18, color: COLORS.text },
+  temperature: { fontSize: 22, fontWeight: 800 },
+  memberBottomRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, color: COLORS.textMuted, fontSize: 13 },
+  recordAction: { color: COLORS.primaryDark, whiteSpace: "nowrap" },
+  emptyState: { minHeight: 150, display: "grid", placeItems: "center", alignContent: "center", gap: 8, textAlign: "center", color: COLORS.textMuted, padding: 20 },
+  primaryButton: { minHeight: 48, padding: "10px 18px", border: "none", borderRadius: 10, background: COLORS.primaryDark, color: "white", fontWeight: 800 },
+  quickGrid: { marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+  quickButton: { minHeight: 54, border: `1px solid ${COLORS.border}`, borderRadius: 12, background: COLORS.surface, color: COLORS.text, fontWeight: 700 },
+  fab: { position: "fixed", right: 20, bottom: "calc(80px + env(safe-area-inset-bottom))", minHeight: 48, border: "none", borderRadius: 24, padding: "0 20px", color: "white", fontWeight: 800, boxShadow: "0 8px 22px rgba(15,23,42,0.22)", zIndex: 500 },
 };

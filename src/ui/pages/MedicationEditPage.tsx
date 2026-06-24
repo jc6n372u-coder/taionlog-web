@@ -1,9 +1,16 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
+import { onDataRefreshRequested } from "../../services/sync/syncEvents";
+import { useSafeDraft } from "../../services/drafts/useSafeDraft";
 import { ApiClient, AiCallError } from "../../data/remote/apiClient";
 import type { User, Medication } from "../../utils/types";
-import { parseInteraction, parseTags, parseSchedule } from "../../utils/aiParse";
+import {
+  parseInteraction,
+  parseTags,
+  parseSchedule,
+} from "../../utils/aiParse";
+import { showAppAlert, showAppConfirm, showSnackbar } from "../feedback/feedbackService";
 
 export default function MedicationEditPage() {
   const nav = useNavigate();
@@ -13,6 +20,11 @@ export default function MedicationEditPage() {
   const [allMeds, setAllMeds] = useState<Medication[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [isOpenDetails, setIsOpenDetails] = useState(false);
+  const [groupId, setGroupId] = useState<string | null>(null);
+  const [originalMedication, setOriginalMedication] = useState<Medication | null>(null);
+  const [ready, setReady] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [remoteChanged, setRemoteChanged] = useState(false);
 
   // 各エリアの拡大状態
   const [isDescExpanded, setIsDescExpanded] = useState(false);
@@ -43,18 +55,29 @@ export default function MedicationEditPage() {
     void (async () => {
       const g = await LocalDb.getCurrentGroup();
       if (!g) return;
+      setGroupId(g.group_id);
       setUsers(await LocalDb.listUsers(g.group_id));
       const meds = await LocalDb.getMedications(g.group_id);
       setAllMeds(meds);
 
-      if (!id) return;
+      if (!id) {
+        setReady(true);
+        return;
+      }
       const target = meds.find((m) => m.uuid === id);
-      if (!target) return;
+      if (!target) {
+        setReady(true);
+        return;
+      }
+      setOriginalMedication(target);
 
       // ディープコピー + 各種パース正規化
-      const loadedData = JSON.parse(JSON.stringify(target)) as Partial<Medication>;
+      const loadedData = JSON.parse(
+        JSON.stringify(target),
+      ) as Partial<Medication>;
       loadedData.ai_tags = parseTags(loadedData.ai_tags);
-      loadedData.ai_interaction = parseInteraction(loadedData.ai_interaction) ?? undefined;
+      loadedData.ai_interaction =
+        parseInteraction(loadedData.ai_interaction) ?? undefined;
 
       const schedule = parseSchedule(loadedData.schedule);
       if (!schedule.type) schedule.type = "fixed";
@@ -64,16 +87,72 @@ export default function MedicationEditPage() {
 
       setFormData(loadedData);
       setIsOpenDetails(true);
+      setReady(true);
     })();
   }, [id]);
 
+  const draftPayload = useMemo(() => ({ formData }), [formData]);
+  const initialPayload = useMemo(() => ({
+    formData: originalMedication ? JSON.parse(JSON.stringify(originalMedication)) as Partial<Medication> : {
+      name: "",
+      yomi: "",
+      show_in_input: 1,
+      schedule: {
+        type: "fixed", wakeup: 0, morning: 0, lunch: 0, evening: 0, bedtime: 0,
+        interval_hours: 8, max_times: 3, reminder_minutes: 0,
+      },
+      ai_tags: [],
+      taste_rating: "normal",
+    },
+  }), [originalMedication]);
+  const dirty = ready && JSON.stringify(draftPayload) !== JSON.stringify(initialPayload);
+
+  const restoreDraft = useCallback((payload: { formData: Partial<Medication> }) => {
+    setFormData(payload.formData);
+  }, []);
+
+  const draft = useSafeDraft<{ formData: Partial<Medication> }>({
+    draftKey: groupId ? `medication:${id ?? "new"}:${groupId}` : null,
+    formType: "medication",
+    groupId,
+    entityId: id ?? null,
+    payload: draftPayload,
+    baseUpdatedAt: originalMedication?.updated_at ?? null,
+    baseRow: originalMedication ? { ...originalMedication } : null,
+    rowStore: "medications",
+    dirty,
+    ready,
+    onRestore: (payload, context) => {
+      restoreDraft(payload);
+      if (context.remoteChanged) setRemoteChanged(true);
+    },
+  });
+
+  useEffect(() => {
+    if (!id || !originalMedication) return;
+    return onDataRefreshRequested(({ stores }) => {
+      if (!stores.includes("medications")) return;
+      void LocalDb.getSharedRow("medications", id).then((current) => {
+        if (current?.updated_at && current.updated_at !== originalMedication.updated_at) {
+          setRemoteChanged(true);
+        }
+      });
+    });
+  }, [id, originalMedication]);
+
+  const leave = useCallback(async () => {
+    if (await draft.requestLeaveKeepingDraft()) nav(-1);
+  }, [draft, nav]);
+
   const handleAskAi = async () => {
     if (!formData.name) {
-      alert("先にお薬の名前を入力してください");
+      await showAppAlert("入力内容を確認してください", "先にお薬の名前を入力してください。");
       return;
     }
     const currentMeds = allMeds
-      .filter((m) => m.uuid !== id && m.target_user_id === formData.target_user_id)
+      .filter(
+        (m) => m.uuid !== id && m.target_user_id === formData.target_user_id,
+      )
       .map((m) => m.name);
 
     setIsAiLoading(true);
@@ -91,15 +170,18 @@ export default function MedicationEditPage() {
         ai_tags: result.tags,
         ai_interaction: safeInteraction,
       }));
-      alert("AI情報を更新しました！(解説欄をご確認ください)");
+      showSnackbar("AI情報を更新しました。解説欄をご確認ください", { tone: "info" });
       setIsDescExpanded(true);
     } catch (e) {
       console.error(e);
       // AiCallError なら詳細を出す
       if (e instanceof AiCallError) {
-        alert(`AI情報の取得に失敗しました。\n[${e.provider}/${e.stage}] ${e.message}`);
+        await showAppAlert(
+          "AI情報の取得に失敗しました",
+          `[${e.provider}/${e.stage}] ${e.message}`,
+        );
       } else {
-        alert("エラーが発生しました。通信環境やAPI設定を確認してください。");
+        await showAppAlert("AI情報の取得に失敗しました", "通信環境やAPI設定を確認してください。");
       }
     } finally {
       setIsAiLoading(false);
@@ -107,48 +189,87 @@ export default function MedicationEditPage() {
   };
 
   const handleSave = async () => {
-    if (!formData.name) {
-      alert("お薬の名前は必須です");
+    if (isSaving) return;
+    if (!formData.name?.trim()) {
+      await showAppAlert("入力内容を確認してください", "お薬の名前は必須です。");
       return;
     }
-    const g = await LocalDb.getCurrentGroup();
-    if (!g) return;
-    const now = new Date().toISOString();
-
-    const newMed: Medication = {
-      uuid: id || crypto.randomUUID(),
-      group_id: g.group_id,
-      name: formData.name!,
-      yomi: formData.yomi || formData.name!,
-      target_user_id: formData.target_user_id,
-      doctor_comment: formData.doctor_comment,
-      show_in_input: formData.show_in_input,
-      ai_tags: formData.ai_tags,
-      ai_description: formData.ai_description,
-      ai_side_effects: formData.ai_side_effects,
-      ai_interaction: formData.ai_interaction,
-      schedule: formData.schedule,
-      memo_taste: formData.memo_taste,
-      taste_rating: formData.taste_rating,
-      display_order: 0,
-      is_deleted: 0,
-      updated_at: now,
-      created_at: id ? undefined : now,
-    };
-
-    if (id) {
-      const original = allMeds.find((m) => m.uuid === id);
-      if (original) newMed.created_at = original.created_at;
+    if (remoteChanged) {
+      const proceed = await showAppConfirm({
+        title: "共有側にも新しい変更があります",
+        message: "現在の入力内容は保持されています。保存すると競合として確認が必要になる場合があります。この内容で保存しますか？",
+        confirmLabel: "この内容で保存する",
+        cancelLabel: "入力を続ける",
+      });
+      if (!proceed) return;
     }
 
-    await LocalDb.upsertMedication(newMed);
-    nav(-1);
+    setIsSaving(true);
+    try {
+      const g = await LocalDb.getCurrentGroup();
+      if (!g) throw new Error("共有グループを確認してください");
+      const now = new Date().toISOString();
+      const original = id ? originalMedication ?? undefined : undefined;
+      const nextDisplayOrder =
+        allMeds.reduce(
+          (maximum, medication) => Math.max(maximum, medication.display_order ?? -1),
+          -1,
+        ) + 1;
+
+      const newMed: Medication = {
+        ...original,
+        uuid: id || crypto.randomUUID(),
+        group_id: g.group_id,
+        name: formData.name.trim(),
+        yomi: formData.yomi || formData.name.trim(),
+        target_user_id: formData.target_user_id,
+        doctor_comment: formData.doctor_comment,
+        show_in_input: formData.show_in_input,
+        ai_tags: formData.ai_tags,
+        ai_description: formData.ai_description,
+        ai_side_effects: formData.ai_side_effects,
+        ai_interaction: formData.ai_interaction,
+        schedule: formData.schedule,
+        memo_taste: formData.memo_taste,
+        taste_rating: formData.taste_rating,
+        display_order: original?.display_order ?? nextDisplayOrder,
+        is_deleted: 0,
+        updated_at: now,
+        created_at: original?.created_at ?? now,
+      };
+
+      await LocalDb.upsertMedication(newMed, "local", {
+        baseUpdatedAt: originalMedication?.updated_at ?? null,
+      });
+      await draft.clearDraft();
+      showSnackbar("この端末に保存しました");
+      nav(-1);
+    } catch (error) {
+      setIsSaving(false);
+      await showAppAlert("保存できませんでした", error instanceof Error ? error.message : "入力内容は保持されています。");
+    }
   };
 
   const handleDelete = async () => {
-    if (id && confirm("このお薬を削除しますか？")) {
-      await LocalDb.deleteMedication(id);
+    if (!id || isSaving) return;
+    const confirmed = await showAppConfirm({
+      title: `「${originalMedication?.name ?? formData.name ?? "お薬"}」を削除しますか？`,
+      message: "記録時のお薬一覧に表示されなくなります。",
+      confirmLabel: "削除する",
+      cancelLabel: "キャンセル",
+      danger: true,
+    });
+    if (!confirmed) return;
+    setIsSaving(true);
+    try {
+      await LocalDb.deleteMedication(id, "local", {
+        baseUpdatedAt: originalMedication?.updated_at ?? null,
+      });
+      await draft.clearDraft();
+      showSnackbar("お薬を削除しました", { tone: "info" });
       nav(-1);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -161,7 +282,9 @@ export default function MedicationEditPage() {
   };
 
   return (
-    <div style={{ minHeight: "100dvh", background: "#f4f5f7", paddingBottom: 100 }}>
+    <div
+      style={{ minHeight: "100dvh", background: "#f4f5f7", paddingBottom: 100 }}
+    >
       <header
         style={{
           height: 56,
@@ -173,8 +296,17 @@ export default function MedicationEditPage() {
         }}
       >
         <button
-          onClick={() => nav(-1)}
-          style={{ background: "none", border: "none", color: "white", fontSize: 20 }}
+          onClick={() => void leave()}
+          type="button"
+          disabled={isSaving}
+          aria-label="前の画面へ戻る"
+          style={{
+            minWidth: 44,
+            background: "none",
+            border: "none",
+            color: "white",
+            fontSize: 20,
+          }}
         >
           ←
         </button>
@@ -183,15 +315,38 @@ export default function MedicationEditPage() {
         </span>
         {id && (
           <button
-            onClick={handleDelete}
-            style={{ marginLeft: "auto", background: "none", border: "none", color: "white" }}
+            type="button"
+            onClick={() => void handleDelete()}
+            disabled={isSaving}
+            aria-label="このお薬を削除"
+            style={{
+              minWidth: 44,
+              marginLeft: "auto",
+              background: "none",
+              border: "none",
+              color: "white",
+            }}
           >
             🗑️
           </button>
         )}
       </header>
 
-      <main style={{ padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
+      {remoteChanged && (
+        <div role="alert" style={{ maxWidth: 680, margin: "0 auto", padding: "12px 16px", background: "#fef9c3", color: "#713f12" }}>
+          <strong>このお薬は別の端末で更新されています</strong><br />
+          入力内容は保持しています。保存時に競合判定を行います。
+        </div>
+      )}
+
+      <main
+        style={{
+          padding: 16,
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
         {/* 基本情報 */}
         <div style={styles.card}>
           <label style={styles.label}>お薬の名前 (必須)</label>
@@ -238,13 +393,21 @@ export default function MedicationEditPage() {
                 {users.map((u) => (
                   <button
                     key={u.uuid}
-                    onClick={() => setFormData({ ...formData, target_user_id: u.uuid })}
+                    onClick={() =>
+                      setFormData({ ...formData, target_user_id: u.uuid })
+                    }
                     style={{
                       padding: "8px 16px",
                       borderRadius: 20,
                       border: "1px solid #66A9D9",
-                      background: formData.target_user_id === u.uuid ? "#66A9D9" : "white",
-                      color: formData.target_user_id === u.uuid ? "white" : "#66A9D9",
+                      background:
+                        formData.target_user_id === u.uuid
+                          ? "#66A9D9"
+                          : "white",
+                      color:
+                        formData.target_user_id === u.uuid
+                          ? "white"
+                          : "#66A9D9",
                     }}
                   >
                     {u.name}
@@ -274,8 +437,12 @@ export default function MedicationEditPage() {
                     borderRadius: 6,
                     border: "none",
                     fontWeight: "bold",
-                    background: formData.schedule?.type === "fixed" ? "white" : "transparent",
-                    color: formData.schedule?.type === "fixed" ? "#66A9D9" : "#999",
+                    background:
+                      formData.schedule?.type === "fixed"
+                        ? "white"
+                        : "transparent",
+                    color:
+                      formData.schedule?.type === "fixed" ? "#66A9D9" : "#999",
                     boxShadow:
                       formData.schedule?.type === "fixed"
                         ? "0 1px 2px rgba(0,0,0,0.1)"
@@ -292,8 +459,14 @@ export default function MedicationEditPage() {
                     borderRadius: 6,
                     border: "none",
                     fontWeight: "bold",
-                    background: formData.schedule?.type === "interval" ? "white" : "transparent",
-                    color: formData.schedule?.type === "interval" ? "#66A9D9" : "#999",
+                    background:
+                      formData.schedule?.type === "interval"
+                        ? "white"
+                        : "transparent",
+                    color:
+                      formData.schedule?.type === "interval"
+                        ? "#66A9D9"
+                        : "#999",
                     boxShadow:
                       formData.schedule?.type === "interval"
                         ? "0 1px 2px rgba(0,0,0,0.1)"
@@ -313,48 +486,69 @@ export default function MedicationEditPage() {
                     textAlign: "center",
                   }}
                 >
-                  {(["wakeup", "morning", "lunch", "evening", "bedtime"] as const).map(
-                    (key, i) => {
-                      const labels = ["起床", "朝", "昼", "夕", "就寝"];
-                      return (
-                        <div key={key}>
-                          <div style={{ fontSize: 10, marginBottom: 4 }}>{labels[i]}</div>
-                          <input
-                            type="number"
-                            step="0.5"
-                            value={formData.schedule?.[key] || ""}
-                            onChange={(e) =>
-                              updateSchedule(key, parseFloat(e.target.value) || 0)
-                            }
-                            style={{
-                              width: "100%",
-                              padding: 4,
-                              textAlign: "center",
-                              border: "1px solid #ddd",
-                              borderRadius: 4,
-                            }}
-                          />
+                  {(
+                    [
+                      "wakeup",
+                      "morning",
+                      "lunch",
+                      "evening",
+                      "bedtime",
+                    ] as const
+                  ).map((key, i) => {
+                    const labels = ["起床", "朝", "昼", "夕", "就寝"];
+                    return (
+                      <div key={key}>
+                        <div style={{ fontSize: 10, marginBottom: 4 }}>
+                          {labels[i]}
                         </div>
-                      );
-                    }
-                  )}
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={formData.schedule?.[key] || ""}
+                          onChange={(e) =>
+                            updateSchedule(key, parseFloat(e.target.value) || 0)
+                          }
+                          style={{
+                            width: "100%",
+                            padding: 4,
+                            textAlign: "center",
+                            border: "1px solid #ddd",
+                            borderRadius: 4,
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 12 }}
+                >
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
                     <span style={{ fontSize: 14 }}>間隔:</span>
                     <input
                       type="number"
                       value={formData.schedule?.interval_hours || ""}
                       onChange={(e) =>
-                        updateSchedule("interval_hours", parseFloat(e.target.value))
+                        updateSchedule(
+                          "interval_hours",
+                          parseFloat(e.target.value),
+                        )
                       }
-                      style={{ ...styles.input, width: 80, textAlign: "center" }}
+                      style={{
+                        ...styles.input,
+                        width: 80,
+                        textAlign: "center",
+                      }}
                     />
                     <span style={{ fontSize: 14 }}>時間おき</span>
                   </div>
 
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
                     <span style={{ fontSize: 14 }}>上限:</span>
                     <input
                       type="number"
@@ -362,7 +556,11 @@ export default function MedicationEditPage() {
                       onChange={(e) =>
                         updateSchedule("max_times", parseFloat(e.target.value))
                       }
-                      style={{ ...styles.input, width: 80, textAlign: "center" }}
+                      style={{
+                        ...styles.input,
+                        width: 80,
+                        textAlign: "center",
+                      }}
                     />
                     <span style={{ fontSize: 14 }}>回まで / 日</span>
                   </div>
@@ -375,13 +573,19 @@ export default function MedicationEditPage() {
                       borderRadius: 8,
                     }}
                   >
-                    <label style={{ ...styles.label, marginBottom: 4 }}>🔔 リマインダー初期値</label>
-                    <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
+                    <label style={{ ...styles.label, marginBottom: 4 }}>
+                      🔔 リマインダー初期値
+                    </label>
+                    <div
+                      style={{ fontSize: 12, color: "#666", marginBottom: 8 }}
+                    >
                       記録時に自動で通知時間をセットします。
                       <br />
                       0にすると自動セットされません。
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 8 }}
+                    >
                       <input
                         type="number"
                         value={
@@ -392,10 +596,14 @@ export default function MedicationEditPage() {
                         onChange={(e) =>
                           updateSchedule(
                             "reminder_minutes",
-                            (parseFloat(e.target.value) || 0) * 60
+                            (parseFloat(e.target.value) || 0) * 60,
                           )
                         }
-                        style={{ ...styles.input, width: 80, textAlign: "center" }}
+                        style={{
+                          ...styles.input,
+                          width: 80,
+                          textAlign: "center",
+                        }}
                       />
                       <span style={{ fontSize: 14 }}>時間後</span>
                     </div>
@@ -414,7 +622,9 @@ export default function MedicationEditPage() {
                   marginBottom: 8,
                 }}
               >
-                <span style={{ fontWeight: "bold", color: "#0369a1" }}>🤖 AIサポート</span>
+                <span style={{ fontWeight: "bold", color: "#0369a1" }}>
+                  🤖 AIサポート
+                </span>
                 <button
                   onClick={handleAskAi}
                   disabled={isAiLoading}
@@ -455,14 +665,14 @@ export default function MedicationEditPage() {
                         formData.ai_interaction.status === "danger"
                           ? "#fecaca"
                           : formData.ai_interaction.status === "warning"
-                          ? "#fef08a"
-                          : "#d1fae5",
+                            ? "#fef08a"
+                            : "#d1fae5",
                       color:
                         formData.ai_interaction.status === "danger"
                           ? "#7f1d1d"
                           : formData.ai_interaction.status === "warning"
-                          ? "#713f12"
-                          : "#064e3b",
+                            ? "#713f12"
+                            : "#064e3b",
                       padding: 12,
                       borderRadius: 8,
                       marginBottom: 12,
@@ -479,7 +689,9 @@ export default function MedicationEditPage() {
               <label style={styles.label}>解説 (AI) - タップで拡大</label>
               <textarea
                 value={formData.ai_description || ""}
-                onChange={(e) => setFormData({ ...formData, ai_description: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, ai_description: e.target.value })
+                }
                 onClick={() => setIsDescExpanded(!isDescExpanded)}
                 style={{
                   ...styles.textarea,
@@ -492,7 +704,11 @@ export default function MedicationEditPage() {
 
               <label style={styles.label}>用途タグ</label>
               <input
-                value={Array.isArray(formData.ai_tags) ? formData.ai_tags.join(", ") : ""}
+                value={
+                  Array.isArray(formData.ai_tags)
+                    ? formData.ai_tags.join(", ")
+                    : ""
+                }
                 onChange={(e) =>
                   setFormData({
                     ...formData,
@@ -506,10 +722,14 @@ export default function MedicationEditPage() {
 
             {/* 医師・薬剤師コメント */}
             <div style={styles.card}>
-              <label style={styles.label}>医師・薬剤師コメント - タップで拡大</label>
+              <label style={styles.label}>
+                医師・薬剤師コメント - タップで拡大
+              </label>
               <textarea
                 value={formData.doctor_comment || ""}
-                onChange={(e) => setFormData({ ...formData, doctor_comment: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, doctor_comment: e.target.value })
+                }
                 onClick={() => setIsDoctorExpanded(!isDoctorExpanded)}
                 style={{
                   ...styles.textarea,
@@ -523,7 +743,9 @@ export default function MedicationEditPage() {
 
             {/* 親メモ */}
             <div style={styles.card}>
-              <label style={styles.label}>親メモ (味・飲ませ方) - タップで拡大</label>
+              <label style={styles.label}>
+                親メモ (味・飲ませ方) - タップで拡大
+              </label>
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                 {(["good:◎", "normal:○", "bad:△"] as const).map((opt) => {
                   const [val, icon] = opt.split(":");
@@ -541,10 +763,12 @@ export default function MedicationEditPage() {
                         padding: 8,
                         borderRadius: 8,
                         border: "1px solid #ddd",
-                        background: formData.taste_rating === val ? "#e0f2fe" : "white",
+                        background:
+                          formData.taste_rating === val ? "#e0f2fe" : "white",
                         fontSize: 18,
                         fontWeight: "bold",
-                        color: formData.taste_rating === val ? "#0369a1" : "#666",
+                        color:
+                          formData.taste_rating === val ? "#0369a1" : "#666",
                       }}
                     >
                       {icon}
@@ -554,7 +778,9 @@ export default function MedicationEditPage() {
               </div>
               <textarea
                 value={formData.memo_taste || ""}
-                onChange={(e) => setFormData({ ...formData, memo_taste: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, memo_taste: e.target.value })
+                }
                 onClick={() => setIsMemoExpanded(!isMemoExpanded)}
                 style={{
                   ...styles.textarea,
@@ -576,12 +802,18 @@ export default function MedicationEditPage() {
                 }}
               >
                 <div>
-                  <div style={{ fontWeight: "bold", fontSize: 14 }}>記録メニューに表示する</div>
+                  <div style={{ fontWeight: "bold", fontSize: 14 }}>
+                    記録メニューに表示する
+                  </div>
                   <div style={{ fontSize: 11, color: "#999" }}>
                     OFFにすると記録時の選択肢から隠せます
                   </div>
                 </div>
-                <div
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={formData.show_in_input === 1}
+                  aria-label="記録メニューに表示する"
                   onClick={() =>
                     setFormData({
                       ...formData,
@@ -589,12 +821,15 @@ export default function MedicationEditPage() {
                     })
                   }
                   style={{
+                    border: "none",
+                    padding: 0,
                     width: 50,
                     height: 30,
                     borderRadius: 15,
                     position: "relative",
                     cursor: "pointer",
-                    background: formData.show_in_input === 1 ? "#66A9D9" : "#ccc",
+                    background:
+                      formData.show_in_input === 1 ? "#66A9D9" : "#ccc",
                     transition: "background 0.3s",
                   }}
                 >
@@ -611,7 +846,7 @@ export default function MedicationEditPage() {
                       boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
                     }}
                   />
-                </div>
+                </button>
               </div>
             </div>
           </>
@@ -631,7 +866,10 @@ export default function MedicationEditPage() {
         }}
       >
         <button
-          onClick={handleSave}
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={isSaving}
+          aria-busy={isSaving}
           style={{
             width: "100%",
             padding: 16,
@@ -643,7 +881,7 @@ export default function MedicationEditPage() {
             fontSize: 16,
           }}
         >
-          保 存
+          {isSaving ? "保存中…" : "保 存"}
         </button>
       </div>
     </div>
@@ -651,8 +889,19 @@ export default function MedicationEditPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  card: { background: "white", padding: 16, borderRadius: 12, border: "1px solid #ddd" },
-  label: { display: "block", fontSize: 12, color: "#666", marginBottom: 6, fontWeight: "bold" },
+  card: {
+    background: "white",
+    padding: 16,
+    borderRadius: 12,
+    border: "1px solid #ddd",
+  },
+  label: {
+    display: "block",
+    fontSize: 12,
+    color: "#666",
+    marginBottom: 6,
+    fontWeight: "bold",
+  },
   input: {
     width: "100%",
     padding: 12,

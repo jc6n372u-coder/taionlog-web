@@ -1,9 +1,16 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LocalDb } from "../../data/local/localDb";
 import { ApiClient } from "../../data/remote/apiClient";
+import { requestFullSync } from "../../services/sync/syncCoordinator";
+import { showAppAlert } from "../feedback/feedbackService";
 
 type Mode = "menu" | "create" | "join";
+
+function getErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace("Exception: ", "");
+}
 
 export default function OnboardingPage() {
   const nav = useNavigate();
@@ -34,13 +41,11 @@ export default function OnboardingPage() {
     setBusy(true);
     try {
       const name = groupName.trim();
-      const resp: any = await ApiClient.createGroup(name);
-      
-      // レスポンス解析（揺らぎ吸収）
-      const data = resp?.data ?? resp?.result;
-      const group_id = data?.group_id ?? data?.id ?? data?.uuid;
-      const group_name = data?.name ?? name;
-      const join_code = data?.join_code ?? data?.code;
+      const resp = await ApiClient.createGroup(name);
+      const data = resp.data;
+      const group_id = data.group_id;
+      const group_name = data.name || name;
+      const join_code = data.join_code;
 
       if (!group_id) throw new Error("グループ作成に失敗しました（ID取得不可）");
       
@@ -50,9 +55,10 @@ export default function OnboardingPage() {
         await LocalDb.setMeta("invite_code", join_code);
       }
 
+      await requestFullSync();
       nav("/");
-    } catch (e: any) {
-      setErr((e?.message ?? String(e)).replace("Exception: ", ""));
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -64,12 +70,10 @@ export default function OnboardingPage() {
     setBusy(true);
     try {
       const code = joinCode.trim().toUpperCase();
-      const resp: any = await ApiClient.joinGroup(code);
-
-      // レスポンス解析
-      const data = resp?.data ?? resp?.result;
-      const group_id = data?.group_id ?? data?.id ?? data?.uuid;
-      const group_name = data?.name ?? "家族";
+      const resp = await ApiClient.joinGroup(code);
+      const data = resp.data;
+      const group_id = data.group_id;
+      const group_name = data.name || "家族";
 
       if (!group_id) throw new Error("グループ参加に失敗しました（ID取得不可）");
       
@@ -77,16 +81,18 @@ export default function OnboardingPage() {
       // 参加したコード自体を保存しておく
       await LocalDb.setMeta("invite_code", code);
 
+      await requestFullSync();
       nav("/");
-    } catch (e: any) {
-      setErr((e?.message ?? String(e)).replace("Exception: ", ""));
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error));
     } finally {
       setBusy(false);
     }
   }
 
-  function explainSecurity() {
-    alert(
+  async function explainSecurity() {
+    await showAppAlert(
+      "初回の安全確認",
       "【初回だけ確認】\n\n" +
         "・このアプリは家族向けの体温記録です。\n" +
         "・データは端末内（ローカルDB）に保存されます。\n" +
@@ -119,7 +125,7 @@ export default function OnboardingPage() {
             <button style={styles.btn} disabled={busy} onClick={() => setMode("join")}>
               参加コードで参加する
             </button>
-            <button style={styles.btn} disabled={busy} onClick={explainSecurity}>
+            <button style={styles.btn} disabled={busy} onClick={() => void explainSecurity()}>
               先に確認（保存場所・プライバシー）
             </button>
             <div style={{ fontSize: 12, opacity: 0.75, lineHeight: 1.6 }}>

@@ -1,8 +1,10 @@
-﻿// 重要: Pushは安定運用の障害になりやすい。SSOTとして『PWAインストール済みで、ユーザーが明示的に許可した場合のみ』有効化する。
+type NavigatorWithStandalone = Navigator & { standalone?: boolean };
+
+// 重要: Pushは安定運用の障害になりやすい。SSOTとして『PWAインストール済みで、ユーザーが明示的に許可した場合のみ』有効化する。
 export function isPwaInstalled(): boolean {
   // display-mode: standalone でPWA起動時
   const m = window.matchMedia("(display-mode: standalone)");
-  return (m && m.matches) || (navigator as any).standalone === true;
+  return (m && m.matches) || (navigator as NavigatorWithStandalone).standalone === true;
 }
 
 export function ensurePwa() {

@@ -36,3 +36,34 @@ input, textarea {
   height: 100%;
   isolation: isolate;
 }
+button, a, select, input[type="button"], input[type="submit"] {
+  min-height: 44px;
+}
+
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 3px solid #005a9e;
+  outline-offset: 2px;
+}
+
+button:disabled, [aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.skip-link:focus {
+  transform: translateY(0) !important;
+}
+
+@keyframes taionlog-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

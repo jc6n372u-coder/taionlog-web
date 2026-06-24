@@ -1,6 +1,7 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { loadDeviceSettings, saveDeviceSettings, type DeviceSettingsV1 } from "../../../app/deviceSettings";
 import { requestBrowserNotificationPermission } from "../../../services/notifications/tier1_push_min";
+import { showAppAlert } from "../../../ui/feedback/feedbackService";
 
 export default function PersonalSettingsPage() {
   const [settings, setSettings] = useState<DeviceSettingsV1>(loadDeviceSettings());
@@ -44,7 +45,7 @@ export default function PersonalSettingsPage() {
         <h4 style={{ margin: "0 0 10px" }}>通知設定</h4>
         <button onClick={async () => {
            const p = await requestBrowserNotificationPermission();
-           alert(`権限状態: ${p}`);
+           await showAppAlert("通知権限", `現在の権限状態: ${p}`);
         }}>
           通知権限を確認・取得
         </button>
