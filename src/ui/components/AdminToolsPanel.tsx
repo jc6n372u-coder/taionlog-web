@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useNavigate } from "react-router-dom";
 import { useSyncStatus } from "../../services/sync/useSyncStatus";
 import { COLORS } from "../tokens";
 import { showAppConfirm } from "../feedback/feedbackService";
@@ -61,7 +62,8 @@ function getFullSyncFailureMessage(code: string | null, retryable: boolean): str
 }
 
 export function AdminToolsPanel() {
-  const { display, runFullSync } = useSyncStatus();
+  const navigate = useNavigate();
+  const { status, display, runFullSync } = useSyncStatus();
   const [operation, setOperation] = useState<Operation>(null);
   const [message, setMessage] = useState<PanelMessage | null>(null);
   const mountedRef = useRef(true);
@@ -74,6 +76,7 @@ export function AdminToolsPanel() {
 
   const isBusy = operation !== null;
   const fullSyncDisabled = isBusy || !display.canFullSync;
+  const syncStatusDestination = status.conflictCount > 0 ? "/sync/conflicts" : "/sync";
 
   async function clearCache() {
     if (isBusy) return;
@@ -160,10 +163,20 @@ export function AdminToolsPanel() {
 
   return (
     <div style={styles.panel}>
-      <div style={styles.currentStatus}>
+      <button
+        type="button"
+        onClick={() => navigate(syncStatusDestination)}
+        aria-label={`${display.label}${display.detail ? `。${display.detail}` : ""}。同期状況を開く`}
+        aria-live={display.ariaLive}
+        aria-busy={status.kind === "syncing"}
+        style={styles.currentStatus}
+      >
         <span style={styles.currentStatusLabel}>現在の同期状態</span>
-        <strong>{display.label}</strong>
-      </div>
+        <span style={styles.currentStatusValue}>
+          <strong>{display.label}</strong>
+          <span aria-hidden="true" style={styles.currentStatusChevron}>›</span>
+        </span>
+      </button>
 
       <button
         type="button"
@@ -207,18 +220,35 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
   },
   currentStatus: {
+    width: "100%",
+    minHeight: 44,
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    padding: "8px 10px",
-    borderRadius: 8,
-    background: COLORS.bg,
+    padding: "8px 0",
+    border: "none",
+    background: "transparent",
     color: COLORS.text,
+    textAlign: "left",
+    cursor: "pointer",
     fontSize: 12,
   },
   currentStatusLabel: {
     color: COLORS.textMuted,
+  },
+  currentStatusValue: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+    color: COLORS.text,
+  },
+  currentStatusChevron: {
+    color: COLORS.textMuted,
+    fontSize: 20,
+    lineHeight: 1,
   },
   btn: {
     width: "100%",

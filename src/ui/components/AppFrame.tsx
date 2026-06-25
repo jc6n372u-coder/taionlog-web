@@ -1,6 +1,5 @@
 import { useEffect, type CSSProperties } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import { COLORS } from "../tokens";
 
 const MAIN_PATHS = new Set(["/", "/chart", "/settings"]);
@@ -21,9 +20,6 @@ export function AppFrame() {
       <a href="#main-content" style={styles.skipLink} className="skip-link">
         本文へ移動
       </a>
-      <div style={styles.syncFrame}>
-        <SyncStatusIndicator compact={location.pathname !== "/sync"} />
-      </div>
       <main
         id="main-content"
         style={{
@@ -83,12 +79,6 @@ const styles: Record<string, CSSProperties> = {
     background: COLORS.dark,
     color: "white",
     transform: "translateY(-160%)",
-  },
-  syncFrame: {
-    width: "100%",
-    maxWidth: 680,
-    margin: "0 auto",
-    padding: "8px 12px 0",
   },
   content: { minHeight: "calc(100dvh - 60px)" },
   contentWithNavigation: { paddingBottom: "calc(72px + env(safe-area-inset-bottom))" },
